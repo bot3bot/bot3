@@ -524,4 +524,3 @@ if DISCORD_TOKEN:
     bot.run(DISCORD_TOKEN)
 else:
     print("❌ لم يتم العثور على DISCORD_TOKEN")
-
