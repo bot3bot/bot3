@@ -42,19 +42,12 @@ bot = commands.Bot(
 
 POINT_CHANNEL = 1497204458680090779
 TOP_CHANNEL = 1497642199859593388
-
 KEYWORD_CHANNEL = 1497911384191668254
 
-# روم الإجازات
 LEAVE_CHANNEL = 1490070238270718013
-
-# روم لوق الإجازات
 LEAVE_LOG_CHANNEL = 1490820000477610036
-
-# رتبة الإجازة
 LEAVE_ROLE = 1492607429249339502
 
-# رومين بدون احتساب تفاعل
 BLOCKED_CHANNELS = [
     1497203612432990259,
     1497204458680090779
@@ -255,8 +248,12 @@ class LeaveView(discord.ui.View):
             ephemeral=True
         )
 
-@bot.command(name="setupleave")
-async def setup_leave(ctx):
+# =========================
+# أمر لوحة الإجازات
+# =========================
+
+@bot.command(name="اجازه")
+async def leave_panel(ctx):
 
     if ctx.channel.id != LEAVE_CHANNEL:
         return
@@ -304,8 +301,6 @@ async def on_message(message):
         points[uid] = points.get(uid, 0) + add
 
         save_json(POINT_FILE, points)
-
-    # كلمات صوره وتكت
 
     if message.channel.id == KEYWORD_CHANNEL:
 
@@ -398,13 +393,13 @@ async def show_points(ctx):
         remaining = 0
 
     embed = discord.Embed(
-        title="📊 نقاط التفاعل",
+        title="📊 نظام التفاعل",
         color=discord.Color.blue()
     )
 
     embed.description = (
         f"👤 المستخدم : {ctx.author.mention}\n\n"
-        f"📈 مجموع نقاط التفاعل : {total_points}\n\n"
+        f"📈 نقاط التفاعل الحالية : {total_points}\n\n"
         f"🎯 نقاط الترقية المطلوبة : {required_points}\n\n"
         f"📌 المتبقي للترقية : {remaining}"
     )
@@ -462,7 +457,7 @@ async def top_points(ctx):
     await ctx.send(embed=embed)
 
 # =========================
-# تصفير نقاط
+# تصفير نقاط شخص
 # =========================
 
 @bot.command(name="تصفير")
@@ -480,10 +475,37 @@ async def reset_points(ctx, member: discord.Member):
 
     save_json(POINT_FILE, points)
 
-    await ctx.send(f"✅ تم تصفير نقاط {member.mention}")
+    await ctx.send(
+        f"✅ تم تصفير نقاط التفاعل لـ {member.mention}"
+    )
 
 # =========================
-# تعديل متطلبات الترقية
+# إضافة نقاط
+# =========================
+
+@bot.command(name="اضف")
+async def add_points(ctx, member: discord.Member, amount: int):
+
+    if ctx.channel.id != TOP_CHANNEL:
+        return
+
+    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
+        return
+
+    points = load_json(POINT_FILE)
+
+    uid = str(member.id)
+
+    points[uid] = points.get(uid, 0) + amount
+
+    save_json(POINT_FILE, points)
+
+    await ctx.send(
+        f"✅ تم إضافة {amount} نقطة إلى {member.mention}"
+    )
+
+# =========================
+# تعديل متطلب الترقية
 # =========================
 
 @bot.command(name="setreq")
@@ -529,32 +551,7 @@ async def reset_upgrade(ctx, member: discord.Member):
     )
 
 # =========================
-# إضافة نقاط
-# =========================
-
-@bot.command(name="اضف")
-async def add_points(ctx, member: discord.Member, amount: int):
-
-    if ctx.channel.id != TOP_CHANNEL:
-        return
-
-    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
-        return
-
-    points = load_json(POINT_FILE)
-
-    uid = str(member.id)
-
-    points[uid] = points.get(uid, 0) + amount
-
-    save_json(POINT_FILE, points)
-
-    await ctx.send(
-        f"✅ تم إضافة {amount} نقطة إلى {member.mention}"
-    )
-
-# =========================
-# تصفير الكل
+# تصفير جميع نقاط التفاعل
 # =========================
 
 @bot.command(name="resetall")
@@ -566,9 +563,16 @@ async def reset_all(ctx):
     if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
         return
 
-    save_json(POINT_FILE, {})
+    points = load_json(POINT_FILE)
 
-    await ctx.send("✅ تم تصفير جميع النقاط")
+    for user_id in points:
+        points[user_id] = 0
+
+    save_json(POINT_FILE, points)
+
+    await ctx.send(
+        "✅ تم تصفير جميع نقاط التفاعل فقط"
+    )
 
 # =========================
 # دبل
@@ -611,4 +615,3 @@ if DISCORD_TOKEN:
     bot.run(DISCORD_TOKEN)
 else:
     print("❌ لم يتم العثور على DISCORD_TOKEN")
-
