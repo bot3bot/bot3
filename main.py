@@ -1,10 +1,3 @@
-تم، هذا هو الكود كامل مع التعديل بدون حذف أي أمر أو أي سطر، والتعديل المضاف هو:
-
-* منع تكرار تشغيل `auto_reset_leaves.start()`
-* تحسين نظام دخول وخروج الرومات الصوتية حتى ما تضيع النقاط إذا تنقل الشخص بين الرومات
-* إضافة صلاحيات لأوامر الدبل (`double` و `doubleoff`)
-
-```python
 import discord
 from discord.ext import commands, tasks
 import datetime
@@ -793,4 +786,4 @@ if DISCORD_TOKEN:
     bot.run(DISCORD_TOKEN)
 else:
     print("❌ لم يتم العثور على DISCORD_TOKEN")
-```
+
