@@ -1,3 +1,4 @@
+```python
 import discord
 from discord.ext import commands
 import datetime
@@ -47,15 +48,18 @@ TOP_CHANNEL = 1497642199859593388
 KEYWORD_CHANNEL = 1497911384191668254
 
 POINT_ROLES = [
-1482194383515422752,
-1480443913557905499
+    1482194383515422752,
+    1480443913557905499,
+
+    # الرتبة الجديدة
+    1477492633847857252
 ]
 
 ALLOWED_ROLES = [
-1478970736717598840,
-1495873706923393205,
-1490386915629989948,
-1478971845729583276
+    1478970736717598840,
+    1495873706923393205,
+    1490386915629989948,
+    1478971845729583276
 ]
 
 # =========================
@@ -64,6 +68,9 @@ ALLOWED_ROLES = [
 
 POINT_FILE = "points.json"
 DOUBLE_FILE = "double.json"
+
+# متطلبات التفاعل
+REQUIRE_FILE = "requirements.json"
 
 def load_json(file):
 
@@ -222,25 +229,35 @@ async def show_points(ctx):
         return
 
     points = load_json(POINT_FILE)
+    requirements = load_json(REQUIRE_FILE)
 
     uid = str(ctx.author.id)
 
     total = points.get(uid, 0)
 
+    # المطلوب للترقية
+    required_points = requirements.get(uid, 1000)
+
     embed = discord.Embed(
-        title="📊 نقاط التفاعل",
+        title="📊〢نِـظَـام نِـقَـاط الـتَّـفَـاعُـل",
         color=discord.Color.blue()
     )
 
     embed.add_field(
-        name="المستخدم",
+        name="👤〢الـمُـسْـتَـخْـدِم :",
         value=ctx.author.mention,
         inline=False
     )
 
     embed.add_field(
-        name="مجموع النقاط",
+        name="📈〢مَـجْـمُـوع الـنِّـقَـاط الـحَـالِـيَّـة :",
         value=f"{total} نقطة",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎯〢الـنِّـقَـاط الـمَـطْـلُـوبَـة لِـلـتَّـرْقِـيَـة :",
+        value=f"{required_points} نقطة",
         inline=False
     )
 
@@ -326,6 +343,64 @@ async def reset_points(ctx, member: discord.Member):
     await ctx.send(embed=embed)
 
 # =========================
+# تصفير متطلب التفاعل
+# =========================
+
+@bot.command(name="resetreq")
+async def reset_requirement(ctx, member: discord.Member):
+
+    if ctx.channel.id != TOP_CHANNEL:
+        return
+
+    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
+
+        await ctx.send("❌ لا يسمح لك باستخدام الامر")
+        return
+
+    requirements = load_json(REQUIRE_FILE)
+
+    requirements[str(member.id)] = 0
+
+    save_json(REQUIRE_FILE, requirements)
+
+    embed = discord.Embed(
+        title="🧹 تصفير متطلب التفاعل",
+        description=f"تم تصفير متطلب التفاعل لـ {member.mention}",
+        color=discord.Color.orange()
+    )
+
+    await ctx.send(embed=embed)
+
+# =========================
+# تصفير متطلب الترقية
+# =========================
+
+@bot.command(name="resetupgrade")
+async def reset_upgrade(ctx, member: discord.Member):
+
+    if ctx.channel.id != TOP_CHANNEL:
+        return
+
+    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
+
+        await ctx.send("❌ لا يسمح لك باستخدام الامر")
+        return
+
+    requirements = load_json(REQUIRE_FILE)
+
+    requirements[str(member.id)] = 1000
+
+    save_json(REQUIRE_FILE, requirements)
+
+    embed = discord.Embed(
+        title="🎯 تصفير متطلب الترقية",
+        description=f"تم إعادة متطلب الترقية الأساسي لـ {member.mention}",
+        color=discord.Color.blurple()
+    )
+
+    await ctx.send(embed=embed)
+
+# =========================
 # إضافة نقاط
 # =========================
 
@@ -351,6 +426,35 @@ async def add_points(ctx, member: discord.Member, amount: int):
     embed = discord.Embed(
         title="➕ إضافة نقاط",
         description=f"تم إضافة {amount} نقطة إلى {member.mention}",
+        color=discord.Color.green()
+    )
+
+    await ctx.send(embed=embed)
+
+# =========================
+# تحديد متطلب الترقية
+# =========================
+
+@bot.command(name="setreq")
+async def set_requirement(ctx, member: discord.Member, amount: int):
+
+    if ctx.channel.id != TOP_CHANNEL:
+        return
+
+    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
+
+        await ctx.send("❌ لا يسمح لك باستخدام الامر")
+        return
+
+    requirements = load_json(REQUIRE_FILE)
+
+    requirements[str(member.id)] = amount
+
+    save_json(REQUIRE_FILE, requirements)
+
+    embed = discord.Embed(
+        title="🎯 تعديل متطلب الترقية",
+        description=f"تم تحديد متطلب الترقية لـ {member.mention} إلى {amount} نقطة",
         color=discord.Color.green()
     )
 
@@ -420,3 +524,4 @@ if DISCORD_TOKEN:
     bot.run(DISCORD_TOKEN)
 else:
     print("❌ لم يتم العثور على DISCORD_TOKEN")
+```
