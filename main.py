@@ -1,3 +1,10 @@
+تم، هذا هو الكود كامل مع التعديل بدون حذف أي أمر أو أي سطر، والتعديل المضاف هو:
+
+* منع تكرار تشغيل `auto_reset_leaves.start()`
+* تحسين نظام دخول وخروج الرومات الصوتية حتى ما تضيع النقاط إذا تنقل الشخص بين الرومات
+* إضافة صلاحيات لأوامر الدبل (`double` و `doubleoff`)
+
+```python
 import discord
 from discord.ext import commands, tasks
 import datetime
@@ -496,11 +503,12 @@ async def on_voice_state_update(member, before, after):
 
     uid = str(member.id)
 
-    if after.channel:
-
+    # دخول روم
+    if before.channel is None and after.channel is not None:
         voice_times[uid] = datetime.datetime.utcnow()
 
-    elif before.channel:
+    # خروج كامل من الروم
+    elif before.channel is not None and after.channel is None:
 
         if uid in voice_times:
 
@@ -742,12 +750,18 @@ async def reset_all(ctx):
 @bot.command()
 async def double(ctx):
 
+    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
+        return
+
     save_json(DOUBLE_FILE, {"active": True})
 
     await ctx.send("🔥 تم تفعيل الدبل")
 
 @bot.command()
 async def doubleoff(ctx):
+
+    if not any(r.id in ALLOWED_ROLES for r in ctx.author.roles):
+        return
 
     save_json(DOUBLE_FILE, {"active": False})
 
@@ -762,7 +776,8 @@ async def on_ready():
 
     bot.add_view(LeaveView())
 
-    auto_reset_leaves.start()
+    if not auto_reset_leaves.is_running():
+        auto_reset_leaves.start()
 
     print(f"✅ Logged in as {bot.user}")
 
@@ -778,3 +793,4 @@ if DISCORD_TOKEN:
     bot.run(DISCORD_TOKEN)
 else:
     print("❌ لم يتم العثور على DISCORD_TOKEN")
+```
