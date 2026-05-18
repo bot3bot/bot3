@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import datetime
 import json
 import os
@@ -74,6 +74,11 @@ POINT_FILE = "points.json"
 DOUBLE_FILE = "double.json"
 REQUIRE_FILE = "requirements.json"
 LEAVE_FILE = "leaves.json"
+LEAVE_BALANCE_FILE = "leave_balance.json"
+
+# =========================
+# JSON
+# =========================
 
 def load_json(file):
 
@@ -90,7 +95,92 @@ def save_json(file, data):
         json.dump(data, f, indent=4)
 
 # =========================
-# نظام الإجازات
+# نظام الإجازات الجديد
+# =========================
+
+MAX_MONTHLY_LEAVE = 14
+MIN_LEAVE_DAYS = 3
+
+def reset_user_balance_if_needed(user_id):
+
+    balances = load_json(LEAVE_BALANCE_FILE)
+
+    uid = str(user_id)
+
+    now = datetime.datetime.utcnow()
+
+    if uid not in balances:
+
+        balances[uid] = {
+            "remaining": MAX_MONTHLY_LEAVE,
+            "last_reset": now.timestamp()
+        }
+
+        save_json(LEAVE_BALANCE_FILE, balances)
+
+        return balances[uid]
+
+    last_reset = datetime.datetime.utcfromtimestamp(
+        balances[uid]["last_reset"]
+    )
+
+    days_passed = (now - last_reset).days
+
+    if days_passed >= 30:
+
+        balances[uid]["remaining"] = MAX_MONTHLY_LEAVE
+        balances[uid]["last_reset"] = now.timestamp()
+
+        save_json(LEAVE_BALANCE_FILE, balances)
+
+    return balances[uid]
+
+# =========================
+# RESET LOOP
+# =========================
+
+@tasks.loop(hours=12)
+async def auto_reset_leaves():
+
+    balances = load_json(LEAVE_BALANCE_FILE)
+
+    now = datetime.datetime.utcnow()
+
+    changed = False
+
+    for uid, data in balances.items():
+
+        last_reset = datetime.datetime.utcfromtimestamp(
+            data["last_reset"]
+        )
+
+        days_passed = (now - last_reset).days
+
+        if days_passed >= 30:
+
+            balances[uid]["remaining"] = MAX_MONTHLY_LEAVE
+            balances[uid]["last_reset"] = now.timestamp()
+
+            changed = True
+
+            try:
+
+                user = await bot.fetch_user(int(uid))
+
+                if user:
+
+                    await user.send(
+                        "✅ تم إعادة رصيد الإجازات الخاص بك إلى 14 يوم"
+                    )
+
+            except:
+                pass
+
+    if changed:
+        save_json(LEAVE_BALANCE_FILE, balances)
+
+# =========================
+# مودال الإجازة
 # =========================
 
 class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
@@ -111,9 +201,19 @@ class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
 
         try:
             days = int(self.days.value)
+
         except:
+
             await interaction.response.send_message(
                 "❌ عدد الأيام غير صحيح",
+                ephemeral=True
+            )
+            return
+
+        if days < MIN_LEAVE_DAYS:
+
+            await interaction.response.send_message(
+                "❌ أقل مدة للإجازة هي 3 أيام",
                 ephemeral=True
             )
             return
@@ -121,6 +221,34 @@ class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
         leaves = load_json(LEAVE_FILE)
 
         uid = str(interaction.user.id)
+
+        if uid in leaves:
+
+            await interaction.response.send_message(
+                "❌ لديك إجازة حالياً",
+                ephemeral=True
+            )
+            return
+
+        balances = load_json(LEAVE_BALANCE_FILE)
+
+        data = reset_user_balance_if_needed(uid)
+
+        remaining = data["remaining"]
+
+        if days > remaining:
+
+            await interaction.response.send_message(
+                f"❌ رصيدك المتبقي {remaining} يوم فقط",
+                ephemeral=True
+            )
+            return
+
+        balances = load_json(LEAVE_BALANCE_FILE)
+
+        balances[uid]["remaining"] -= days
+
+        save_json(LEAVE_BALANCE_FILE, balances)
 
         now = datetime.datetime.utcnow().timestamp()
 
@@ -149,7 +277,8 @@ class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
             embed.description = (
                 f"👤 المستخدم : {interaction.user.mention}\n\n"
                 f"📝 السبب : {self.reason.value}\n\n"
-                f"📅 عدد الأيام : {days}"
+                f"📅 عدد الأيام : {days}\n\n"
+                f"📌 المتبقي له : {balances[uid]['remaining']} يوم"
             )
 
             embed.timestamp = datetime.datetime.utcnow()
@@ -157,9 +286,17 @@ class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
             await log_channel.send(embed=embed)
 
         await interaction.response.send_message(
-            "✅ تم تسجيل الإجازة بنجاح",
+            (
+                f"✅ تم تسجيل الإجازة بنجاح\n\n"
+                f"📌 المتبقي من رصيدك : "
+                f"{balances[uid]['remaining']} يوم"
+            ),
             ephemeral=True
         )
+
+# =========================
+# VIEW
+# =========================
 
 class LeaveView(discord.ui.View):
 
@@ -216,6 +353,19 @@ class LeaveView(discord.ui.View):
             )
             return
 
+        days = leaves[uid]["days"]
+
+        balances = load_json(LEAVE_BALANCE_FILE)
+
+        data = reset_user_balance_if_needed(uid)
+
+        balances[uid]["remaining"] += days
+
+        if balances[uid]["remaining"] > MAX_MONTHLY_LEAVE:
+            balances[uid]["remaining"] = MAX_MONTHLY_LEAVE
+
+        save_json(LEAVE_BALANCE_FILE, balances)
+
         del leaves[uid]
 
         save_json(LEAVE_FILE, leaves)
@@ -236,7 +386,9 @@ class LeaveView(discord.ui.View):
 
             embed.description = (
                 f"👤 المستخدم : {interaction.user.mention}\n\n"
-                f"✅ تم سحب الإجازة بنجاح"
+                f"✅ تم سحب الإجازة بنجاح\n\n"
+                f"📌 الرصيد الحالي : "
+                f"{balances[uid]['remaining']} يوم"
             )
 
             embed.timestamp = datetime.datetime.utcnow()
@@ -244,12 +396,16 @@ class LeaveView(discord.ui.View):
             await log_channel.send(embed=embed)
 
         await interaction.response.send_message(
-            "✅ تم سحب الإجازة",
+            (
+                f"✅ تم سحب الإجازة\n\n"
+                f"📌 رصيدك الحالي : "
+                f"{balances[uid]['remaining']} يوم"
+            ),
             ephemeral=True
         )
 
 # =========================
-# أمر لوحة الإجازات
+# لوحة الإجازات
 # =========================
 
 @bot.command(name="اجازه")
@@ -261,7 +417,8 @@ async def leave_panel(ctx):
     embed = discord.Embed(
         title="📋 نظام الإجازات",
         description=(
-            "اضغط على الزر المناسب\n\n"
+            "رصيد كل إداري : 14 يوم شهرياً\n"
+            "أقل طلب إجازة : 3 أيام\n\n"
             "🟢 طلب إجازة\n"
             "🔴 سحب الإجازة"
         ),
@@ -600,6 +757,8 @@ async def doubleoff(ctx):
 async def on_ready():
 
     bot.add_view(LeaveView())
+
+    auto_reset_leaves.start()
 
     print(f"✅ Logged in as {bot.user}")
 
