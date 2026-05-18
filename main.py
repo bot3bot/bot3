@@ -303,7 +303,8 @@ class LeaveView(discord.ui.View):
 
     @discord.ui.button(
         label="طلب إجازة",
-        style=discord.ButtonStyle.green
+        style=discord.ButtonStyle.green,
+        custom_id="request_leave_button"
     )
     async def request_leave(
         self,
@@ -317,7 +318,8 @@ class LeaveView(discord.ui.View):
 
     @discord.ui.button(
         label="سحب الإجازة",
-        style=discord.ButtonStyle.red
+        style=discord.ButtonStyle.red,
+        custom_id="remove_leave_button"
     )
     async def remove_leave(
         self,
