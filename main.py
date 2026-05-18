@@ -95,7 +95,7 @@ def save_json(file, data):
         json.dump(data, f, indent=4)
 
 # =========================
-# نظام الإجازات الجديد
+# نظام الإجازات
 # =========================
 
 MAX_MONTHLY_LEAVE = 14
@@ -244,8 +244,6 @@ class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
             )
             return
 
-        balances = load_json(LEAVE_BALANCE_FILE)
-
         balances[uid]["remaining"] -= days
 
         save_json(LEAVE_BALANCE_FILE, balances)
@@ -357,8 +355,6 @@ class LeaveView(discord.ui.View):
 
         balances = load_json(LEAVE_BALANCE_FILE)
 
-        data = reset_user_balance_if_needed(uid)
-
         balances[uid]["remaining"] += days
 
         if balances[uid]["remaining"] > MAX_MONTHLY_LEAVE:
@@ -441,6 +437,7 @@ async def on_message(message):
         return
 
     points = load_json(POINT_FILE)
+    requirements = load_json(REQUIRE_FILE)
     double = load_json(DOUBLE_FILE)
 
     uid = str(message.author.id)
@@ -456,8 +453,10 @@ async def on_message(message):
             add = 5
 
         points[uid] = points.get(uid, 0) + add
+        requirements[uid] = requirements.get(uid, 0) + add
 
         save_json(POINT_FILE, points)
+        save_json(REQUIRE_FILE, requirements)
 
     if message.channel.id == KEYWORD_CHANNEL:
 
@@ -466,14 +465,18 @@ async def on_message(message):
         if "صوره" in text:
 
             points[uid] = points.get(uid, 0) + 10
+            requirements[uid] = requirements.get(uid, 0) + 10
 
             save_json(POINT_FILE, points)
+            save_json(REQUIRE_FILE, requirements)
 
         elif "تكت" in text:
 
             points[uid] = points.get(uid, 0) + 25
+            requirements[uid] = requirements.get(uid, 0) + 25
 
             save_json(POINT_FILE, points)
+            save_json(REQUIRE_FILE, requirements)
 
     await bot.process_commands(message)
 
@@ -510,6 +513,7 @@ async def on_voice_state_update(member, before, after):
             if count > 0:
 
                 points = load_json(POINT_FILE)
+                requirements = load_json(REQUIRE_FILE)
                 double = load_json(DOUBLE_FILE)
 
                 add = 15
@@ -520,8 +524,10 @@ async def on_voice_state_update(member, before, after):
                 total = add * count
 
                 points[uid] = points.get(uid, 0) + total
+                requirements[uid] = requirements.get(uid, 0) + total
 
                 save_json(POINT_FILE, points)
+                save_json(REQUIRE_FILE, requirements)
 
             del voice_times[uid]
 
@@ -541,13 +547,7 @@ async def show_points(ctx):
     uid = str(ctx.author.id)
 
     total_points = points.get(uid, 0)
-
-    required_points = requirements.get(uid, 1000)
-
-    remaining = required_points - total_points
-
-    if remaining < 0:
-        remaining = 0
+    upgrade_points = requirements.get(uid, 0)
 
     embed = discord.Embed(
         title="📊 نظام التفاعل",
@@ -557,8 +557,7 @@ async def show_points(ctx):
     embed.description = (
         f"👤 المستخدم : {ctx.author.mention}\n\n"
         f"📈 نقاط التفاعل الحالية : {total_points}\n\n"
-        f"🎯 نقاط الترقية المطلوبة : {required_points}\n\n"
-        f"📌 المتبقي للترقية : {remaining}"
+        f"🎯 نقاط الترقية الحالية : {upgrade_points}"
     )
 
     embed.set_thumbnail(url=ctx.author.display_avatar.url)
@@ -614,7 +613,7 @@ async def top_points(ctx):
     await ctx.send(embed=embed)
 
 # =========================
-# تصفير نقاط شخص
+# تصفير نقاط التفاعل فقط
 # =========================
 
 @bot.command(name="تصفير")
@@ -650,19 +649,22 @@ async def add_points(ctx, member: discord.Member, amount: int):
         return
 
     points = load_json(POINT_FILE)
+    requirements = load_json(REQUIRE_FILE)
 
     uid = str(member.id)
 
     points[uid] = points.get(uid, 0) + amount
+    requirements[uid] = requirements.get(uid, 0) + amount
 
     save_json(POINT_FILE, points)
+    save_json(REQUIRE_FILE, requirements)
 
     await ctx.send(
         f"✅ تم إضافة {amount} نقطة إلى {member.mention}"
     )
 
 # =========================
-# تعديل متطلب الترقية
+# تعديل نقاط الترقية
 # =========================
 
 @bot.command(name="setreq")
@@ -681,11 +683,11 @@ async def set_requirement(ctx, member: discord.Member, amount: int):
     save_json(REQUIRE_FILE, requirements)
 
     await ctx.send(
-        f"✅ تم تحديد متطلب الترقية لـ {member.mention} إلى {amount}"
+        f"✅ تم تعديل نقاط الترقية لـ {member.mention} إلى {amount}"
     )
 
 # =========================
-# تصفير متطلب الترقية
+# تصفير نقاط الترقية فقط
 # =========================
 
 @bot.command(name="resetupgrade")
@@ -699,12 +701,12 @@ async def reset_upgrade(ctx, member: discord.Member):
 
     requirements = load_json(REQUIRE_FILE)
 
-    requirements[str(member.id)] = 1000
+    requirements[str(member.id)] = 0
 
     save_json(REQUIRE_FILE, requirements)
 
     await ctx.send(
-        f"✅ تم تصفير متطلب الترقية لـ {member.mention}"
+        f"✅ تم تصفير نقاط الترقية لـ {member.mention}"
     )
 
 # =========================
