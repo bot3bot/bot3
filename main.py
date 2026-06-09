@@ -56,10 +56,10 @@ LEAVE_CHANNEL = 1490070238270718013
 LEAVE_LOG_CHANNEL = 1490820000477610036
 LEAVE_ROLE = 1492607429249339502
 
-# الإنذارات
+# الإنذارات والأمن
 WARNING_LOG_CHANNEL = 1479608600350429194
 WARNING_INPUT_CHANNEL = 1512860383461773482
-WARNING_TIMEOUT_DAYS = 7
+HACKED_PROTECTION_CHANNEL = 1514000444349878483  # روم حماية الحسابات المهكرة
 
 BLOCKED_CHANNELS = {
     1497203612432990259,
@@ -100,6 +100,7 @@ REQUIRE_FILE = DATA_DIR / "requirements.json"
 LEAVE_FILE = DATA_DIR / "leaves.json"
 LEAVE_BALANCE_FILE = DATA_DIR / "leave_balance.json"
 WARNING_FILE = DATA_DIR / "warnings.json"
+TEMPBANS_FILE = DATA_DIR / "tempbans.json"  # ملف تخرين الباند المؤقت للحسابات المهكرة
 
 
 def load_json(file: Path, default=None):
@@ -591,6 +592,8 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
+    # تشغيل فلاتر الأمن والإنذارات المخصصة
+    await handle_hacked_protection(message)
     await handle_warning_input(message)
     await handle_message_points(message)
     await bot.process_commands(message)
@@ -850,22 +853,26 @@ async def create_warning(
     save_json(WARNING_FILE, warnings)
 
     log_channel = guild.get_channel(WARNING_LOG_CHANNEL) or bot.get_channel(WARNING_LOG_CHANNEL)
+    
+    # التعديل: جعل خلفية رسالة الإنذار باللون الأحمر الكامل لتوضيح العقوبة
     embed = discord.Embed(
-        title="إنذار إداري جديد",
-        color=discord.Color.orange(),
+        title="🚨 إنذار إداري جديد",
+        color=discord.Color.red(), 
         timestamp=created_at,
     )
-    embed.add_field(name="العضو", value=target.mention, inline=True)
+    embed.add_field(name="العضو المعاقب", value=target.mention, inline=True)
     embed.add_field(name="المسؤول", value=moderator.mention, inline=True)
-    embed.add_field(name="المدة", value=format_duration(duration), inline=True)
-    embed.add_field(name="ينتهي", value=f"<t:{int(expires_at.timestamp())}:R>", inline=True)
+    embed.add_field(name="مدة العقوبة", value=format_duration(duration), inline=True)
+    embed.add_field(name="ينتهي التايم أوت", value=f"<t:{int(expires_at.timestamp())}:R>", inline=True)
     embed.add_field(name="السبب", value=reason, inline=False)
     embed.set_footer(text=f"Warning ID: {warning_id}")
 
+    # التعديل: يتم منشن الشخص خارج الـ Embed لكي يصله التنبيه فوراً ومباشرة في الرسالة
     if log_channel:
         await log_channel.send(content=target.mention, embed=embed)
 
-    timeout_until = created_at + datetime.timedelta(days=WARNING_TIMEOUT_DAYS)
+    # التعديل: حساب التايم أوت تلقائياً حسب الدقائق، الساعات، أو الأيام التي تم كتابتها في الروم
+    timeout_until = created_at + duration
     try:
         await target.timeout(
             timeout_until,
@@ -873,7 +880,7 @@ async def create_warning(
         )
     except discord.Forbidden:
         if log_channel:
-            await log_channel.send(f"⚠️ لم أستطع إعطاء تايم أوت لـ {target.mention} بسبب نقص صلاحيات البوت.")
+            await log_channel.send(f"⚠️ لم أستطع إعطاء تايم أوت لـ {target.mention} بسبب صلاحيات البوت.")
     except discord.HTTPException:
         if log_channel:
             await log_channel.send(f"⚠️ تعذر تطبيق التايم أوت على {target.mention}.")
@@ -1092,6 +1099,76 @@ async def remove_warning(ctx: commands.Context, warning_id: str):
 
 
 # =========================
+# HACKED PROTECTION (NEW SYSTEM)
+# =========================
+
+async def handle_hacked_protection(message: discord.Message):
+    # التحقق من أن الرسالة داخل الروم المستهدف وليست من بوت
+    if message.channel.id != HACKED_PROTECTION_CHANNEL:
+        return
+    if message.author.bot:
+        return
+
+    # 1. حذف رسالة العضو فوراً لمنع السبام أو انتشار الروابط الضارة
+    try:
+        await message.delete()
+    except discord.HTTPException:
+        pass
+
+    # 2. إرسال رسالة خاصة للعضو لتنبيهه
+    try:
+        await message.author.send("حسابك مهكر الباند يوم")
+    except discord.HTTPException:
+        pass  # في حال كان العضو مغلق الخاص تلقائياً
+
+    # 3. إعطاء باند لمدة يوم كامل (24 ساعة) وتخزينه لفك الحظر تلقائياً
+    try:
+        await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (حساب مهكر)", delete_message_days=1)
+        
+        # حفظ بيانات الباند المؤقت لفكه لاحقاً
+        tempbans = load_json(TEMPBANS_FILE)
+        unban_time = now_utc() + datetime.timedelta(days=1)
+        tempbans[str(message.author.id)] = {
+            "guild_id": message.guild.id,
+            "unban_at": unban_time.timestamp()
+        }
+        save_json(TEMPBANS_FILE, tempbans)
+    except discord.Forbidden:
+        print(f"⚠️ تفوق رتبة العضو {message.author} تمنع البوت من تبنيده.")
+    except discord.HTTPException as e:
+        print(f"⚠️ حدث خطأ أثناء محاولة حظر العضو: {e}")
+
+
+@tasks.loop(minutes=1)
+async def check_tempbans():
+    """مهمة دورية للتحقق من انتهاء باند الـ 24 ساعة وفكه تلقائياً"""
+    tempbans = load_json(TEMPBANS_FILE)
+    if not tempbans:
+        return
+
+    current_timestamp = now_utc().timestamp()
+    to_remove = []
+
+    for uid, data in list(tempbans.items()):
+        if current_timestamp >= data["unban_at"]:
+            guild = bot.get_guild(data["guild_id"])
+            if guild:
+                try:
+                    user = await bot.fetch_user(int(uid))
+                    await guild.unban(user, reason="انتهاء مدة الباند المؤقت (24 ساعة)")
+                    to_remove.append(uid)
+                except discord.NotFound:
+                    to_remove.append(uid)  # العضو ليس مبنداً بالأصل
+                except discord.HTTPException:
+                    pass  # محاولة فك الباند لاحقاً في الدورة القادمة
+
+    if to_remove:
+        for uid in to_remove:
+            tempbans.pop(uid, None)
+        save_json(TEMPBANS_FILE, tempbans)
+
+
+# =========================
 # READY / START
 # =========================
 
@@ -1106,6 +1183,10 @@ async def on_ready():
 
     if not award_voice_points.is_running():
         award_voice_points.start()
+
+    # تشغيل نظام الفحص التلقائي للباندات المؤقتة الخاصة بالتهكير
+    if not check_tempbans.is_running():
+        check_tempbans.start()
 
     print(f"Logged in as {bot.user}")
 
