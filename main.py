@@ -60,10 +60,14 @@ LEAVE_ROLE = 1492607429249339502
 WARNING_LOG_CHANNEL = 1479608600350429194
 WARNING_INPUT_CHANNEL = 1512860383461773482
 HACKED_PROTECTION_CHANNEL = 1514000444349878483  # روم حماية الحسابات المهكرة
+HACKED_LOG_CHANNEL = 1514388692549107874        # روم لوقات الحسابات المهكرة الجديد
 ACTIVITY_WARNING_CHANNEL = 1480389401535189065   # روم إنذارات عدم التفاعل الجديد
 
 # رتبة عقوبة عدم التفاعل
 ACTIVITY_PUNISHMENT_ROLE = 1514136578883195001
+
+# الرتبة المستثناة من حسب التفاعل والإنذارات (جديد)
+EXEMPTED_ACTIVITY_ROLE = 1514389169089020125
 
 BLOCKED_CHANNELS = {
     1497203612432990259,
@@ -91,6 +95,7 @@ EXCEPTED_PROTECTION_ROLES = {
     1477492633847857252,
     1478971845729583276,
     1490386915629989948,
+    EXEMPTED_ACTIVITY_ROLE, # إضافة الرتبة الجديدة للاستثناء من باند الحماية أيضاً كأمان إضافي
 }
 
 TEXT_POINTS = 10
@@ -116,6 +121,7 @@ LEAVE_BALANCE_FILE = DATA_DIR / "leave_balance.json"
 WARNING_FILE = DATA_DIR / "warnings.json"
 TEMPBANS_FILE = DATA_DIR / "tempbans.json"
 ACTIVITY_WARNINGS_FILE = DATA_DIR / "activity_warnings.json" # ملف تتبع إنذارات التفاعل
+SYSTEM_CONFIG_FILE = DATA_DIR / "system_config.json"         # ملف حفظ إعدادات النظام وعداد الوقت
 
 
 def load_json(file: Path, default=None):
@@ -152,6 +158,9 @@ def is_admin(member: discord.Member) -> bool:
 
 
 def is_points_member(member: discord.Member) -> bool:
+    # استثناء حاملي رتبة الاستثناء الجديدة من دخول نظام التفاعل أو معاقبتهم
+    if has_any_role(member, {EXEMPTED_ACTIVITY_ROLE}):
+        return False
     return has_any_role(member, POINT_ROLES)
 
 
@@ -430,7 +439,7 @@ class AddPointsModal(discord.ui.Modal, title="إضافة نقاط"):
             return
 
         if not is_points_member(member):
-            await interaction.response.send_message("❌ هذا العضو لا يملك رتب التفاعل المعتمدة.", ephemeral=True)
+            await interaction.response.send_message("❌ هذا العضو لا يملك رتب التفاعل المعتمدة أو مستثنى منها.", ephemeral=True)
             return
 
         total, req = add_points_to_user(member.id, amount, interaction.guild)
@@ -520,6 +529,9 @@ class InteractionPanel(discord.ui.View):
 
     @discord.ui.button(label="نقاطي", style=discord.ButtonStyle.primary, custom_id="points:mine", row=0)
     async def my_points(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if has_any_role(interaction.user, {EXEMPTED_ACTIVITY_ROLE}):
+            await interaction.response.send_message("ℹ️ أنت تملك رتبة مستثناة من نظام التفاعل بالكامل.", ephemeral=True)
+            return
         total, req = get_user_points(interaction.user.id)
         embed = discord.Embed(title="نقاط التفاعل", color=discord.Color.blue(), timestamp=now_utc())
         embed.add_field(name="الإداري", value=interaction.user.mention, inline=False)
@@ -625,7 +637,11 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    await handle_hacked_protection(message)
+    # معالجة حماية الروم من الاختراق أولاً وقبل كل شيء لمنع استهلاك الموارد
+    if message.channel.id == HACKED_PROTECTION_CHANNEL:
+        await handle_hacked_protection(message)
+        return
+
     await handle_warning_input(message)
     await handle_message_points(message)
     await bot.process_commands(message)
@@ -635,7 +651,7 @@ async def handle_message_points(message: discord.Message):
     if not isinstance(message.author, discord.Member):
         return
 
-    # التحقق من أن العضو يملك إحدى رتب التفاعل المعتمدة
+    # التحقق من أن العضو يملك إحدى رتب التفاعل المعتمدة وغير مستثنى
     if not is_points_member(message.author):
         return
 
@@ -689,7 +705,7 @@ async def award_voice_points():
                 if member.bot:
                     continue
 
-                # تحقق من رتب التفاعل
+                # تحقق من رتب التفاعل والاستثناءات
                 if not is_points_member(member):
                     continue
 
@@ -712,7 +728,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if member.bot:
         return
 
-    # تحقق من رتب التفاعل
+    # تحقق من رتب التفاعل والاستثناءات
     if not is_points_member(member):
         return
 
@@ -737,6 +753,10 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 @bot.command(name="تفاعل")
 async def show_points(ctx: commands.Context):
     if ctx.channel.id != POINT_CHANNEL:
+        return
+
+    if has_any_role(ctx.author, {EXEMPTED_ACTIVITY_ROLE}):
+        await ctx.send("ℹ️ أنت تملك رتبة مستثناة من نظام التفاعل والإنذارات.")
         return
 
     total, req = get_user_points(ctx.author.id)
@@ -772,7 +792,7 @@ async def add_points(ctx: commands.Context, member: discord.Member, amount: int)
         return
 
     if not is_points_member(member):
-        await ctx.send("❌ هذا العضو لا يملك رتب التفاعل المعتمدة.")
+        await ctx.send("❌ هذا العضو لا يملك رتب التفاعل المعتمدة أو مستثنى منها.")
         return
 
     total, req = add_points_to_user(member.id, amount, ctx.guild)
@@ -830,14 +850,30 @@ async def double_off(ctx: commands.Context):
 
 
 # =========================
-# AUTOMATIC ACTIVITY CHECK WEEKLY
+# AUTOMATIC ACTIVITY CHECK MONTHLY (MODIFIED)
 # =========================
 
-@tasks.loop(hours=168)  # فحص دوري أسبوعي (كل 7 أيام)
-async def check_weekly_activity():
+@tasks.loop(minutes=30)  # الفحص المتكرر كل نصف ساعة للتحقق من انقضاء الـ 30 يوماً بدقة وثبات
+async def check_monthly_activity():
+    config = load_json(SYSTEM_CONFIG_FILE)
+    current_time = now_utc()
+    
+    # إذا لم تكن هناك نقطة بداية مسجلة (تشغيل البوت لأول مرة)، نعتمد الوقت الحالي كبداية الحساب المستمر
+    if "next_activity_check" not in config:
+        next_check = current_time + datetime.timedelta(days=30)
+        config["next_activity_check"] = next_check.timestamp()
+        save_json(SYSTEM_CONFIG_FILE, config)
+        print(f"[Activity System] تم بدء دورة الـ 30 يوم الجديدة. الفحص القادم: {next_check}")
+        return
+
+    # التحقق مما إذا حان وقت الفحص الفعلي (مرور 30 يوم)
+    if current_time.timestamp() < config["next_activity_check"]:
+        return
+
+    # تنفيذ العقوبات وتصفير النقاط عند انتهاء الـ 30 يوم
+    print("[Activity System] حان موعد فحص التفاعل الشهري التلقائي...")
     activity_warnings = load_json(ACTIVITY_WARNINGS_FILE)
     points = load_json(POINT_FILE)
-    current_time = now_utc()
     expires_at = current_time + datetime.timedelta(days=3)  # مدة الإنذار 3 أيام
 
     for guild in bot.guilds:
@@ -845,37 +881,41 @@ async def check_weekly_activity():
         punish_role = guild.get_role(ACTIVITY_PUNISHMENT_ROLE)
 
         for member in guild.members:
-            if member.bot or not is_points_member(member):
+            if member.bot:
+                continue
+                
+            # استثناء تام ومطلق لأصحاب الرتبة المستثناة من الفحص والنقاط
+            if has_any_role(member, {EXEMPTED_ACTIVITY_ROLE}):
+                continue
+
+            if not has_any_role(member, POINT_ROLES):
                 continue
 
             uid = str(member.id)
             user_points = points.get(uid, 0)
 
-            # إذا لم يحقق الـ 500 نقطة المطلوبة
+            # إذا لم يحقق الـ 500 نقطة المطلوبة خلال الشهر
             if user_points < 500:
-                # إعطاء رتبة العقوبة
                 if punish_role:
                     try:
-                        await member.add_roles(punish_role, reason="إنذار تلقائي: عدم تحقيق الحد الأدنى من التفاعل (500 نقطة)")
+                        await member.add_roles(punish_role, reason="إنذار تلقائي شهري: عدم تحقيق الحد الأدنى من التفاعل (500 نقطة)")
                     except discord.HTTPException:
                         pass
 
-                # تسجيل الإنذار في الملف
                 activity_warnings[uid] = {
                     "guild_id": guild.id,
                     "expires_at": expires_at.timestamp()
                 }
 
-                # إرسال الإنذار بشكل احترافي في الروم المخصص
                 if warning_channel:
                     embed = discord.Embed(
-                        title="🚨 إنذار عدم تفاعل تلقائي",
-                        description=f"تم توجيه إنذار رسمي لـ {member.mention} نظراً لعدم استيفاء نشاطك للتفاعل المطلوب هذا الأسبوع.",
+                        title="🚨 إنذار عدم تفاعل تلقائي (شهري)",
+                        description=f"تم توجيه إنذار رسمي لـ {member.mention} نظراً لعدم استيفاء نشاطك للتفاعل المطلوب هذا الشهر.",
                         color=discord.Color.red(),
                         timestamp=current_time
                     )
                     embed.add_field(name="العضو المعاقب", value=member.mention, inline=True)
-                    embed.add_field(name="نقاطك الحالية", value=f"`{user_points} / 500`", inline=True)
+                    embed.add_field(name="نقاطك الإجمالية للشهر", value=f"`{user_points} / 500`", inline=True)
                     embed.add_field(name="مدة العقوبة", value="`3 أيام` (72 ساعة)", inline=True)
                     embed.add_field(name="الإجراء المتخذ", value=f"إعطاء رتبة {punish_role.mention if punish_role else 'العقوبة'} + حرمان من طلب الإجازات.", inline=False)
                     embed.add_field(name="تاريخ انتهاء العقوبة", value=f"<t:{int(expires_at.timestamp())}:F> (<t:{int(expires_at.timestamp())}:R>)", inline=False)
@@ -884,9 +924,14 @@ async def check_weekly_activity():
                     
                     await warning_channel.send(content=member.mention, embed=embed)
 
-            # تصفير نقاط التفاعل دائماً لبدء أسبوع جديد
+            # تصفير نقاط التفاعل لبدء شهر جديد كلياً
             points[uid] = 0
 
+    # تعيين موعد الفحص التلقائي القادم (بعد 30 يوم من الآن)
+    next_check = current_time + datetime.timedelta(days=30)
+    config["next_activity_check"] = next_check.timestamp()
+    
+    save_json(SYSTEM_CONFIG_FILE, config)
     save_json(POINT_FILE, points)
     save_json(ACTIVITY_WARNINGS_FILE, activity_warnings)
 
@@ -911,7 +956,6 @@ async def check_expired_activity_warnings():
                     try:
                         await member.remove_roles(punish_role, reason="انتهاء مدة إنذار عدم التفاعل (3 أيام)")
                         
-                        # إرسال إشعار في روم الإنذارات بانتهاء العقوبة
                         warning_channel = guild.get_channel(ACTIVITY_WARNING_CHANNEL)
                         if warning_channel:
                             embed = discord.Embed(
@@ -1246,28 +1290,60 @@ async def remove_warning(ctx: commands.Context, warning_id: str):
 
 
 # =========================
-# HACKED PROTECTION (WITH EXCEPTIONS)
+# HACKED PROTECTION (WITH ADVANCED LOGGING)
 # =========================
 
 async def handle_hacked_protection(message: discord.Message):
-    if message.channel.id != HACKED_PROTECTION_CHANNEL:
-        return
     if message.author.bot:
         return
 
+    # التحقق من رتب الاستثناء
     if isinstance(message.author, discord.Member) and has_any_role(message.author, EXCEPTED_PROTECTION_ROLES):
         return
 
+    # تحديد نوع الإرسال لتضمينه في اللوق الاحترافي
+    has_image = any(
+        attachment.content_type and attachment.content_type.startswith("image/")
+        for attachment in message.attachments
+    )
+    
+    if has_image:
+        content_type_str = "🖼️ قام بإرسال صورة / مرفق"
+    else:
+        content_type_str = f"📝 المحتوى النصي:\n```{message.content}```" if message.content.strip() else "❌ محتوى غير معروف"
+
+    # محاولة مسح الرسالة المخترقة فوراً
     try:
         await message.delete()
     except discord.HTTPException:
         pass
 
+    # إرسال اللوق بشكل احترافي جداً في روم اللوقات المحدد
+    log_channel = message.guild.get_channel(HACKED_LOG_CHANNEL)
+    if log_channel:
+        embed = discord.Embed(
+            title="🛡️ نظام حماية السيرفر | حظر تلقائي للروم المحمي",
+            description=f"تم رصد إرسال غير مصرح به في روم {message.channel.mention} وتم التعامل مع العضو مباشرة.",
+            color=discord.Color.from_rgb(200, 0, 0),
+            timestamp=now_utc()
+        )
+        embed.add_field(name="👤 العضو المخترق/المخالف", value=message.author.mention, inline=True)
+        embed.add_field(name="🆔 آيدي الحساب", value=f"`{message.author.id}`", inline=True)
+        embed.add_field(name="⚙️ الإجراء التلقائي", value="`BAN` حظر مؤقت (24 ساعة) لحماية السيرفر", inline=False)
+        embed.add_field(name="🔍 تفاصيل المادة المرسلة", value=content_type_str, inline=False)
+        embed.set_thumbnail(url=message.author.display_avatar.url)
+        embed.set_footer(text="نظام الأمان واللوقات التلقائي")
+        
+        # إرسال اللوق مع المنشن بشكل واضح واحترافي
+        await log_channel.send(content=f"🚨 **تنبيه حماية الحسابات المهكرة:** {message.author.mention}", embed=embed)
+
+    # إخطار العضو في الخاص قبل التبنيد
     try:
         await message.author.send("حسابك مهكر الباند يوم")
     except discord.HTTPException:
         pass
 
+    # تنفيذ باند الحظر التلقائي وحفظ البيانات
     try:
         await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (حساب مهكر)", delete_message_days=1)
         
@@ -1279,7 +1355,8 @@ async def handle_hacked_protection(message: discord.Message):
         }
         save_json(TEMPBANS_FILE, tempbans)
     except discord.Forbidden:
-        print(f"⚠️ تفوق رتبة العضو {message.author} تمنع البوت من تبنيده.")
+        if log_channel:
+            await log_channel.send(f"⚠️ تفوق رتبة العضو {message.author.mention} تمنع البوت من تبنيده آلياً.")
     except discord.HTTPException as e:
         print(f"⚠️ حدث خطأ أثناء محاولة حظر العضو: {e}")
 
@@ -1331,9 +1408,9 @@ async def on_ready():
     if not check_tempbans.is_running():
         check_tempbans.start()
 
-    # تشغيل لوحات الفحص التلقائي لإنذارات وعقوبات عدم التفاعل الجديدة
-    if not check_weekly_activity.is_running():
-        check_weekly_activity.start()
+    # تشغيل نظام الفحص التلقائي لإنذارات التفاعل الشهري الجديد (المُعدّل)
+    if not check_monthly_activity.is_running():
+        check_monthly_activity.start()
 
     if not check_expired_activity_warnings.is_running():
         check_expired_activity_warnings.start()
