@@ -60,16 +60,21 @@ LEAVE_ROLE = 1492607429249339502
 WARNING_LOG_CHANNEL = 1479608600350429194
 WARNING_INPUT_CHANNEL = 1512860383461773482
 HACKED_PROTECTION_CHANNEL = 1514000444349878483  # روم حماية الحسابات المهكرة
+ACTIVITY_WARNING_CHANNEL = 1480389401535189065   # روم إنذارات عدم التفاعل الجديد
+
+# رتبة عقوبة عدم التفاعل
+ACTIVITY_PUNISHMENT_ROLE = 1514136578883195001
 
 BLOCKED_CHANNELS = {
     1497203612432990259,
     1497204458680090779,
 }
 
+# رتب التفاعل المعتمدة فقط لاحتساب النقاط
 POINT_ROLES = {
+    1477492633847857252,
     1482194383515422752,
     1480443913557905499,
-    1477492633847857252,
 }
 
 ADMIN_ROLES = {
@@ -110,6 +115,7 @@ LEAVE_FILE = DATA_DIR / "leaves.json"
 LEAVE_BALANCE_FILE = DATA_DIR / "leave_balance.json"
 WARNING_FILE = DATA_DIR / "warnings.json"
 TEMPBANS_FILE = DATA_DIR / "tempbans.json"
+ACTIVITY_WARNINGS_FILE = DATA_DIR / "activity_warnings.json" # ملف تتبع إنذارات التفاعل
 
 
 def load_json(file: Path, default=None):
@@ -149,7 +155,13 @@ def is_points_member(member: discord.Member) -> bool:
     return has_any_role(member, POINT_ROLES)
 
 
-def add_points_to_user(user_id: int, amount: int, include_requirements: bool = True):
+def add_points_to_user(user_id: int, amount: int, guild: discord.Guild = None, include_requirements: bool = True):
+    # التحقق من أن العضو يملك رتبة التفاعل المطلوبة قبل إضافة أي نقاط
+    if guild:
+        member = guild.get_member(user_id)
+        if not member or not is_points_member(member):
+            return 0, 0
+
     points = load_json(POINT_FILE)
     requirements = load_json(REQUIRE_FILE)
 
@@ -256,6 +268,11 @@ class LeaveModal(discord.ui.Modal, title="طلب إجازة"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
+        # منع الأعضاء الذين لديهم إنذار/رتبة عقوبة من طلب الإجازة
+        if has_any_role(interaction.user, {ACTIVITY_PUNISHMENT_ROLE}):
+            await interaction.response.send_message("❌ لا يمكنك طلب إجازة ولديك إنذار عدم تفاعل نشط.", ephemeral=True)
+            return
+
         try:
             days = int(self.days.value)
         except ValueError:
@@ -321,6 +338,9 @@ class LeaveView(discord.ui.View):
 
     @discord.ui.button(label="طلب إجازة", style=discord.ButtonStyle.green, custom_id="leave:request")
     async def request_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if has_any_role(interaction.user, {ACTIVITY_PUNISHMENT_ROLE}):
+            await interaction.response.send_message("❌ لا يمكنك طلب إجازة ولديك إنذار عدم تفاعل نشط.", ephemeral=True)
+            return
         await interaction.response.send_modal(LeaveModal())
 
     @discord.ui.button(label="سحب الإجازة", style=discord.ButtonStyle.red, custom_id="leave:withdraw")
@@ -409,7 +429,11 @@ class AddPointsModal(discord.ui.Modal, title="إضافة نقاط"):
             await interaction.response.send_message("❌ لم أجد العضو داخل السيرفر.", ephemeral=True)
             return
 
-        total, req = add_points_to_user(member.id, amount)
+        if not is_points_member(member):
+            await interaction.response.send_message("❌ هذا العضو لا يملك رتب التفاعل المعتمدة.", ephemeral=True)
+            return
+
+        total, req = add_points_to_user(member.id, amount, interaction.guild)
         await interaction.response.send_message(
             f"✅ تم إضافة {amount} نقطة إلى {member.mention}. التفاعل: {total} | الترقية: {req}",
             ephemeral=True,
@@ -611,9 +635,13 @@ async def handle_message_points(message: discord.Message):
     if not isinstance(message.author, discord.Member):
         return
 
+    # التحقق من أن العضو يملك إحدى رتب التفاعل المعتمدة
+    if not is_points_member(message.author):
+        return
+
     double_active = load_json(DOUBLE_FILE, {"active": False}).get("active")
     text_amount = DOUBLE_TEXT_POINTS if double_active else TEXT_POINTS
-    add_points_to_user(message.author.id, text_amount)
+    add_points_to_user(message.author.id, text_amount, message.guild)
 
     if message.channel.id != KEYWORD_CHANNEL:
         return
@@ -635,7 +663,7 @@ async def handle_message_points(message: discord.Message):
         keyword_name = "صورة"
 
     if keyword_amount:
-        total, req = add_points_to_user(message.author.id, keyword_amount)
+        total, req = add_points_to_user(message.author.id, keyword_amount, message.guild)
         await message.reply(
             (
                 f"✅ تم تسجيل {keyword_name} واحتساب النقاط بنجاح.\n"
@@ -661,6 +689,10 @@ async def award_voice_points():
                 if member.bot:
                     continue
 
+                # تحقق من رتب التفاعل
+                if not is_points_member(member):
+                    continue
+
                 uid = str(member.id)
                 if uid not in voice_times:
                     voice_times[uid] = current_time
@@ -671,13 +703,17 @@ async def award_voice_points():
                 if count <= 0:
                     continue
 
-                add_points_to_user(member.id, amount * count)
+                add_points_to_user(member.id, amount * count, guild)
                 voice_times[uid] = voice_times[uid] + datetime.timedelta(minutes=5 * count)
 
 
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     if member.bot:
+        return
+
+    # تحقق من رتب التفاعل
+    if not is_points_member(member):
         return
 
     uid = str(member.id)
@@ -693,7 +729,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         if count > 0:
             double_active = load_json(DOUBLE_FILE, {"active": False}).get("active")
             amount = DOUBLE_VOICE_POINTS_EVERY_5_MINUTES if double_active else VOICE_POINTS_EVERY_5_MINUTES
-            add_points_to_user(member.id, amount * count)
+            add_points_to_user(member.id, amount * count, member.guild)
 
         del voice_times[uid]
 
@@ -735,7 +771,11 @@ async def add_points(ctx: commands.Context, member: discord.Member, amount: int)
     if ctx.channel.id != INTERACTION_PANEL_CHANNEL or not is_admin(ctx.author):
         return
 
-    total, req = add_points_to_user(member.id, amount)
+    if not is_points_member(member):
+        await ctx.send("❌ هذا العضو لا يملك رتب التفاعل المعتمدة.")
+        return
+
+    total, req = add_points_to_user(member.id, amount, ctx.guild)
     await ctx.send(f"✅ تم إضافة {amount} نقطة إلى {member.mention}. التفاعل: {total} | الترقية: {req}")
 
 
@@ -787,6 +827,108 @@ async def double_off(ctx: commands.Context):
         return
     save_json(DOUBLE_FILE, {"active": False})
     await ctx.send("❄️ تم إيقاف الدبل.")
+
+
+# =========================
+# AUTOMATIC ACTIVITY CHECK WEEKLY
+# =========================
+
+@tasks.loop(hours=168)  # فحص دوري أسبوعي (كل 7 أيام)
+async def check_weekly_activity():
+    activity_warnings = load_json(ACTIVITY_WARNINGS_FILE)
+    points = load_json(POINT_FILE)
+    current_time = now_utc()
+    expires_at = current_time + datetime.timedelta(days=3)  # مدة الإنذار 3 أيام
+
+    for guild in bot.guilds:
+        warning_channel = guild.get_channel(ACTIVITY_WARNING_CHANNEL)
+        punish_role = guild.get_role(ACTIVITY_PUNISHMENT_ROLE)
+
+        for member in guild.members:
+            if member.bot or not is_points_member(member):
+                continue
+
+            uid = str(member.id)
+            user_points = points.get(uid, 0)
+
+            # إذا لم يحقق الـ 500 نقطة المطلوبة
+            if user_points < 500:
+                # إعطاء رتبة العقوبة
+                if punish_role:
+                    try:
+                        await member.add_roles(punish_role, reason="إنذار تلقائي: عدم تحقيق الحد الأدنى من التفاعل (500 نقطة)")
+                    except discord.HTTPException:
+                        pass
+
+                # تسجيل الإنذار في الملف
+                activity_warnings[uid] = {
+                    "guild_id": guild.id,
+                    "expires_at": expires_at.timestamp()
+                }
+
+                # إرسال الإنذار بشكل احترافي في الروم المخصص
+                if warning_channel:
+                    embed = discord.Embed(
+                        title="🚨 إنذار عدم تفاعل تلقائي",
+                        description=f"تم توجيه إنذار رسمي لـ {member.mention} نظراً لعدم استيفاء نشاطك للتفاعل المطلوب هذا الأسبوع.",
+                        color=discord.Color.red(),
+                        timestamp=current_time
+                    )
+                    embed.add_field(name="العضو المعاقب", value=member.mention, inline=True)
+                    embed.add_field(name="نقاطك الحالية", value=f"`{user_points} / 500`", inline=True)
+                    embed.add_field(name="مدة العقوبة", value="`3 أيام` (72 ساعة)", inline=True)
+                    embed.add_field(name="الإجراء المتخذ", value=f"إعطاء رتبة {punish_role.mention if punish_role else 'العقوبة'} + حرمان من طلب الإجازات.", inline=False)
+                    embed.add_field(name="تاريخ انتهاء العقوبة", value=f"<t:{int(expires_at.timestamp())}:F> (<t:{int(expires_at.timestamp())}:R>)", inline=False)
+                    embed.set_thumbnail(url=member.display_avatar.url)
+                    embed.set_footer(text="نظام الإدارة الآلي وحماية التفاعل")
+                    
+                    await warning_channel.send(content=member.mention, embed=embed)
+
+            # تصفير نقاط التفاعل دائماً لبدء أسبوع جديد
+            points[uid] = 0
+
+    save_json(POINT_FILE, points)
+    save_json(ACTIVITY_WARNINGS_FILE, activity_warnings)
+
+
+@tasks.loop(minutes=1)
+async def check_expired_activity_warnings():
+    activity_warnings = load_json(ACTIVITY_WARNINGS_FILE)
+    if not activity_warnings:
+        return
+
+    current_timestamp = now_utc().timestamp()
+    to_remove = []
+
+    for uid, data in list(activity_warnings.items()):
+        if current_timestamp >= data["expires_at"]:
+            guild = bot.get_guild(data["guild_id"])
+            if guild:
+                member = guild.get_member(int(uid))
+                punish_role = guild.get_role(ACTIVITY_PUNISHMENT_ROLE)
+                
+                if member and punish_role:
+                    try:
+                        await member.remove_roles(punish_role, reason="انتهاء مدة إنذار عدم التفاعل (3 أيام)")
+                        
+                        # إرسال إشعار في روم الإنذارات بانتهاء العقوبة
+                        warning_channel = guild.get_channel(ACTIVITY_WARNING_CHANNEL)
+                        if warning_channel:
+                            embed = discord.Embed(
+                                title="✅ انتهاء عقوبة الإنذار",
+                                description=f"تم سحب رتبة العقوبة تلقائياً عن العضو {member.mention} بعد انتهاء مدة الـ 3 أيام.",
+                                color=discord.Color.green(),
+                                timestamp=now_utc()
+                            )
+                            await warning_channel.send(embed=embed)
+                    except discord.HTTPException:
+                        pass
+                to_remove.append(uid)
+
+    if to_remove:
+        for uid in to_remove:
+            activity_warnings.pop(uid, None)
+        save_json(ACTIVITY_WARNINGS_FILE, activity_warnings)
 
 
 # =========================
@@ -1113,7 +1255,6 @@ async def handle_hacked_protection(message: discord.Message):
     if message.author.bot:
         return
 
-    # التعديل الجديد: إذا كان العضو يملك أي رتبة من الرتب المستثناة يتم تجاوز الفحص وتجاهله تلقائياً
     if isinstance(message.author, discord.Member) and has_any_role(message.author, EXCEPTED_PROTECTION_ROLES):
         return
 
@@ -1189,6 +1330,13 @@ async def on_ready():
 
     if not check_tempbans.is_running():
         check_tempbans.start()
+
+    # تشغيل لوحات الفحص التلقائي لإنذارات وعقوبات عدم التفاعل الجديدة
+    if not check_weekly_activity.is_running():
+        check_weekly_activity.start()
+
+    if not check_expired_activity_warnings.is_running():
+        check_expired_activity_warnings.start()
 
     print(f"Logged in as {bot.user}")
 
