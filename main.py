@@ -79,6 +79,15 @@ ADMIN_ROLES = {
     1478971845729583276,
 }
 
+# الرتب المستثناة من باند الحماية التلقائي للحسابات المهكرة
+EXCEPTED_PROTECTION_ROLES = {
+    1480443913557905499,
+    1482194383515422752,
+    1477492633847857252,
+    1478971845729583276,
+    1490386915629989948,
+}
+
 TEXT_POINTS = 10
 DOUBLE_TEXT_POINTS = 15
 VOICE_POINTS_EVERY_5_MINUTES = 15
@@ -100,7 +109,7 @@ REQUIRE_FILE = DATA_DIR / "requirements.json"
 LEAVE_FILE = DATA_DIR / "leaves.json"
 LEAVE_BALANCE_FILE = DATA_DIR / "leave_balance.json"
 WARNING_FILE = DATA_DIR / "warnings.json"
-TEMPBANS_FILE = DATA_DIR / "tempbans.json"  # ملف تخرين الباند المؤقت للحسابات المهكرة
+TEMPBANS_FILE = DATA_DIR / "tempbans.json"
 
 
 def load_json(file: Path, default=None):
@@ -592,7 +601,6 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    # تشغيل فلاتر الأمن والإنذارات المخصصة
     await handle_hacked_protection(message)
     await handle_warning_input(message)
     await handle_message_points(message)
@@ -854,7 +862,6 @@ async def create_warning(
 
     log_channel = guild.get_channel(WARNING_LOG_CHANNEL) or bot.get_channel(WARNING_LOG_CHANNEL)
     
-    # التعديل: جعل خلفية رسالة الإنذار باللون الأحمر الكامل لتوضيح العقوبة
     embed = discord.Embed(
         title="🚨 إنذار إداري جديد",
         color=discord.Color.red(), 
@@ -867,11 +874,9 @@ async def create_warning(
     embed.add_field(name="السبب", value=reason, inline=False)
     embed.set_footer(text=f"Warning ID: {warning_id}")
 
-    # التعديل: يتم منشن الشخص خارج الـ Embed لكي يصله التنبيه فوراً ومباشرة في الرسالة
     if log_channel:
         await log_channel.send(content=target.mention, embed=embed)
 
-    # التعديل: حساب التايم أوت تلقائياً حسب الدقائق، الساعات، أو الأيام التي تم كتابتها في الروم
     timeout_until = created_at + duration
     try:
         await target.timeout(
@@ -1099,33 +1104,32 @@ async def remove_warning(ctx: commands.Context, warning_id: str):
 
 
 # =========================
-# HACKED PROTECTION (NEW SYSTEM)
+# HACKED PROTECTION (WITH EXCEPTIONS)
 # =========================
 
 async def handle_hacked_protection(message: discord.Message):
-    # التحقق من أن الرسالة داخل الروم المستهدف وليست من بوت
     if message.channel.id != HACKED_PROTECTION_CHANNEL:
         return
     if message.author.bot:
         return
 
-    # 1. حذف رسالة العضو فوراً لمنع السبام أو انتشار الروابط الضارة
+    # التعديل الجديد: إذا كان العضو يملك أي رتبة من الرتب المستثناة يتم تجاوز الفحص وتجاهله تلقائياً
+    if isinstance(message.author, discord.Member) and has_any_role(message.author, EXCEPTED_PROTECTION_ROLES):
+        return
+
     try:
         await message.delete()
     except discord.HTTPException:
         pass
 
-    # 2. إرسال رسالة خاصة للعضو لتنبيهه
     try:
         await message.author.send("حسابك مهكر الباند يوم")
     except discord.HTTPException:
-        pass  # في حال كان العضو مغلق الخاص تلقائياً
+        pass
 
-    # 3. إعطاء باند لمدة يوم كامل (24 ساعة) وتخزينه لفك الحظر تلقائياً
     try:
         await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (حساب مهكر)", delete_message_days=1)
         
-        # حفظ بيانات الباند المؤقت لفكه لاحقاً
         tempbans = load_json(TEMPBANS_FILE)
         unban_time = now_utc() + datetime.timedelta(days=1)
         tempbans[str(message.author.id)] = {
@@ -1141,7 +1145,6 @@ async def handle_hacked_protection(message: discord.Message):
 
 @tasks.loop(minutes=1)
 async def check_tempbans():
-    """مهمة دورية للتحقق من انتهاء باند الـ 24 ساعة وفكه تلقائياً"""
     tempbans = load_json(TEMPBANS_FILE)
     if not tempbans:
         return
@@ -1158,9 +1161,9 @@ async def check_tempbans():
                     await guild.unban(user, reason="انتهاء مدة الباند المؤقت (24 ساعة)")
                     to_remove.append(uid)
                 except discord.NotFound:
-                    to_remove.append(uid)  # العضو ليس مبنداً بالأصل
+                    to_remove.append(uid)
                 except discord.HTTPException:
-                    pass  # محاولة فك الباند لاحقاً في الدورة القادمة
+                    pass
 
     if to_remove:
         for uid in to_remove:
@@ -1184,7 +1187,6 @@ async def on_ready():
     if not award_voice_points.is_running():
         award_voice_points.start()
 
-    # تشغيل نظام الفحص التلقائي للباندات المؤقتة الخاصة بالتهكير
     if not check_tempbans.is_running():
         check_tempbans.start()
 
