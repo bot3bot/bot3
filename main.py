@@ -116,7 +116,7 @@ PROMOTION_ROLES = [
     1479624758168653824   # الرتبة التاسعة
 ]
 
-# الرتب المستثناExplى من باند الحماية التلقائي للحسابات المهكرة
+# الرتب المستثناة من باند الحماية التلقائي للحسابات المهكرة
 EXCEPTED_PROTECTION_ROLES = {
     1480443913557905499,
     1482194383515422752,
@@ -480,8 +480,7 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
             embed.add_field(name="🆔 الآيدي", value=f"`{self.target_member.id}`", inline=True)
             embed.add_field(name="🔺 الرتبة الحالية", value=self.current_role.mention if self.current_role else "لا يوجد", inline=True)
             embed.add_field(name="🎯 الرتبة المطلوبة", value=self.next_role.mention if self.next_role else "لا يوجد", inline=True)
-            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}
-```", inline=False)
+            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
             embed.add_field(name="🛡️ المسؤول", value=interaction.user.mention, inline=True)
             embed.set_thumbnail(url=self.target_member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات الآلي الاحترافي")
@@ -1654,7 +1653,7 @@ async def handle_hacked_protection(message: discord.Message):
     if log_channel:
         embed = discord.Embed(
             title="🛡️ نظام حماية السيرفر | حظر تلقائي للروم المحمي",
-            description=f"تم رصد إرسال غير مصرح به في روم {message.channel.mention} وتم التعامل مع العضو مباشرة.",
+            description=f"تم رصد إرسال غير مصرح به in روم {message.channel.mention} وتم التعامل مع العضو مباشرة.",
             color=discord.Color.from_rgb(200, 0, 0),
             timestamp=now_utc()
         )
