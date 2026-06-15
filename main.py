@@ -112,7 +112,7 @@ PROMOTION_ROLES = [
     1480818082426392637,  # الرتبة السادسة
     1480390711651336244,  # الرتبة السابعة
     1480391201227280535,  # الرتبة الثامنة
-    1479624758168653824   # الرتبة التاسعة
+    1477492633847857252   # الرتبة التاسعة
 ]
 
 # الرتب المستثناة من باند الحماية التلقائي للحسابات المهكرة
@@ -439,7 +439,7 @@ async def leave_panel(ctx: commands.Context):
 
 
 # ====================================
-# PROMOTION SYSTEM (MODIFIED CHANNELS)
+# PROMOTION SYSTEM
 # ====================================
 
 class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية"):
@@ -464,7 +464,6 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
 
         await asyncio.sleep(2.5)
         
-        # إرسال لوق الرفض في نفس روم اللوحة والطلبات الموحد 1497203612432990259
         reject_channel = interaction.guild.get_channel(PROMOTION_PANEL_CHANNEL)
         if reject_channel:
             embed = discord.Embed(
@@ -477,8 +476,7 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
             embed.add_field(name="🆔 الآيدي", value=f"`{self.target_member.id}`", inline=True)
             embed.add_field(name="🔺 الرتبة الحالية", value=self.current_role.mention if self.current_role else "لا يوجد", inline=True)
             embed.add_field(name="🎯 الرتبة المطلوبة", value=self.next_role.mention if self.next_role else "لا يوجد", inline=True)
-            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}
-```", inline=False)
+            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
             embed.add_field(name="🛡️ المسؤول", value=interaction.user.mention, inline=True)
             embed.set_thumbnail(url=self.target_member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات الآلي الاحترافي")
@@ -571,10 +569,6 @@ class PromotionDecisionView(discord.ui.View):
         await interaction.response.send_modal(RejectPromotionModal(member, current_role, next_role, interaction.message))
 
 
-# ====================================
-# FIXED PROMOTION PANEL (SEND IN SAME CHANNEL)
-# ====================================
-
 class PromotionPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -608,7 +602,6 @@ class PromotionPanel(discord.ui.View):
 
         _, total_req = get_user_points(member.id)
 
-        # حذف الأزرار القديمة لتفادي الفوضى بالروم كما بالصورة الثانية
         try:
             await interaction.message.delete()
         except discord.HTTPException:
@@ -616,7 +609,6 @@ class PromotionPanel(discord.ui.View):
 
         await asyncio.sleep(1.0)
 
-        # إعادة إرسال لوحة الترقية الأساسية النظيفة لكي تبقى متاحة للجميع بالروم
         new_panel_embed = discord.Embed(
             title="🔺 لوحة طلب الترقيات الإدارية الآلية",
             description="من خلال هذه اللوحة يمكنك فحص مجموع نقاط ترقيتك الحالية، وتقديم طلب ترقية رسمي ومباشر لتتم مراجعته والموافقة عليه تلقائياً من قبل الإدارة العليا.",
@@ -624,7 +616,6 @@ class PromotionPanel(discord.ui.View):
         )
         await interaction.channel.send(embed=new_panel_embed, view=PromotionPanel())
 
-        # التعديل الجوهري: إرسال نفس رسالة المربع الأحمر داخل روم اللوحة نفسه 1497203612432990259
         same_room_channel = guild.get_channel(PROMOTION_PANEL_CHANNEL)
         if same_room_channel:
             embed = discord.Embed(
@@ -640,10 +631,7 @@ class PromotionPanel(discord.ui.View):
             embed.set_thumbnail(url=member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات واللوحات المنفصلة الاحترافية")
             
-            # إرسالها للروم الموحد مع الأزرار العامة للمسؤولين
             await same_room_channel.send(embed=embed, view=PromotionDecisionView(member.id, current_role_id, next_role_id))
-            
-            # تأكيد الإرسال بدون مشاكل التوقف أو الظهور المخفي
             await interaction.response.send_message("✅ تم إرسال طلب ترقيتك بنجاح في هذا الروم للمراجعة.", ephemeral=True)
         else:
             await interaction.response.send_message("❌ تعذر إرسال الطلب، تأكد من آيدي الروم المخصص.", ephemeral=True)
