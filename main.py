@@ -52,7 +52,7 @@ POINT_CHANNEL = 1497204458680090779
 INTERACTION_PANEL_CHANNEL = 1497642199859593388
 KEYWORD_CHANNEL = 1497911384191668254
 INTERACTION_LOG_CHANNEL = 1515887367733514310 
-PROMOTION_PANEL_CHANNEL = 1497203612432990259  # الروم المخصص لإرسال واستقبال لوحات طلبات الترقية
+PROMOTION_PANEL_CHANNEL = 1497203612432990259  # روم لوحة طلب الترقية المنفصلة
 
 # الترقية واللوقات
 PROMOTION_REQUEST_CHANNEL = 1515887083623809214 
@@ -96,7 +96,7 @@ ADMIN_ROLES = {
     1478971845729583276,
 }
 
-# الرتب المحددة والوحيدة المصرح لها بقبول ورفض الترقية حسب طلبك الجديد
+# الرتب المحددة والوحيدة المصرح لها بقبول ورفض الترقية حسب طلبك
 PROMOTION_ADMIN_ROLES = {
     1478971845729583276,
     1490386915629989948,
@@ -443,7 +443,7 @@ async def leave_panel(ctx: commands.Context):
 
 
 # ====================================
-# PROMOTION SYSTEM (UPDATED RESOLUTION)
+# PROMOTION SYSTEM
 # ====================================
 
 class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية"):
@@ -480,8 +480,7 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
             embed.add_field(name="🆔 الآيدي", value=f"`{self.target_member.id}`", inline=True)
             embed.add_field(name="🔺 الرتبة الحالية", value=self.current_role.mention if self.current_role else "لا يوجد", inline=True)
             embed.add_field(name="🎯 الرتبة المطلوبة", value=self.next_role.mention if self.next_role else "لا يوجد", inline=True)
-            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}
-```", inline=False)
+            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
             embed.add_field(name="🛡️ المسؤول", value=interaction.user.mention, inline=True)
             embed.set_thumbnail(url=self.target_member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات الآلي الاحترافي")
@@ -575,7 +574,7 @@ class PromotionDecisionView(discord.ui.View):
 
 
 # ====================================
-# NEW ISOLATED PROMOTION PANEL VIEW (AUTO-REPLACE)
+# ISOLATED PROMOTION PANEL VIEW (AUTO-REPLACE)
 # ====================================
 
 class PromotionPanel(discord.ui.View):
@@ -998,7 +997,7 @@ async def handle_message_points(message: discord.Message):
         if log_channel:
             embed_log = discord.Embed(
                 title="📈 لوق تفاعل جديد",
-                description=f"قام {message.author.mention} بالكتابة في روم الكلمات المفتاحية.",
+                description=f"قام {message.author.mention} بالكتابة in روم الكلمات المفتاحية.",
                 color=discord.Color.blue(),
                 timestamp=now_utc()
             )
@@ -1726,7 +1725,7 @@ async def on_ready():
     bot.add_view(LeaveView())
     bot.add_view(InteractionPanel())
     bot.add_view(WarningPanel())
-    bot.add_view(PromotionPanel())  # تفعيل واستقبال لوحة الترقية المنفصلة تلقائياً عند إعادة التشغيل لضمان ثبات الأزرار دائماً
+    bot.add_view(PromotionPanel())  # تسجيل اللوحة المنفصلة التلقائية والمحدثة لتعمل بشكل مستمر عند الريستارت
     bot.add_view(PromotionDecisionView(0, 0, 0)) 
 
     if not auto_reset_leaves.is_running():
