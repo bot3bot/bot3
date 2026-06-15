@@ -87,7 +87,7 @@ POINT_ROLES = {
     1480443913557905499,
 }
 
-# الرتب المحددة حصراً التي يمكنها القبول والرفض بناءً على طلبك الجديد
+# الرتب المحددة حصراً التي يمكنها القبول والرفض
 ALLOWED_DECISION_ROLES = {
     1490386915629989948,
     1505984803839676466,
@@ -220,12 +220,18 @@ def get_user_points(user_id: int):
 
 
 async def send_continuous_promotion_panel(guild: discord.Guild):
-    """إرسال لوحة الترقية الثابتة دائماً في الروم"""
+    """تعديل اللوحة السابقة لإلغاء أزرارها وإرسال لوحة جديدة بالأسفل تماماً لحفظ الشات وطلبات الأعضاء"""
     channel = guild.get_channel(PROMOTION_PANEL_CHANNEL)
     if not channel:
         return
+    
     try:
-        await channel.purge(limit=50, check=lambda m: m.author == bot.user or m.content.startswith("!"))
+        # البحث عن آخر لوحة أرسلها البوت لتعديلها وسحب الأزرار منها (منعاً للتكرار) بدلاً من الحذف والـ Purge
+        async for m in channel.history(limit=50):
+            if m.author == bot.user and m.embeds:
+                if "لوحة طلب الترقيات الإدارية الآلية" in str(m.embeds[0].title):
+                    await m.edit(view=None) # حذف الأزرار القديمة فقط ليبقى الشات سليم
+                    break
     except Exception:
         pass
 
@@ -426,7 +432,7 @@ async def leave_panel(ctx: commands.Context):
 
 
 # ==========================================
-# PROMOTION SYSTEM (تحديث الرتب والمحددات)
+# PROMOTION SYSTEM
 # ==========================================
 
 class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية"):
@@ -440,41 +446,29 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
         self.request_message = request_message
 
     async def on_submit(self, interaction: discord.Interaction):
-        # التحقق الدقيق من رتب التحكم الثلاثة المطلوبة حصراً
         if not has_any_role(interaction.user, ALLOWED_DECISION_ROLES):
             await interaction.response.send_message("❌ لا تملك الرتب الإدارية المخصصة لقبول أو رفض الترقيات.", ephemeral=True)
             return
 
+        # تعديل الرسالة لإخفاء الأزرار ووسمها بـ مرفوضة بدلاً من مسح الشات
         try:
-            await self.request_message.delete()
-        except discord.HTTPException:
+            rejected_embed = self.request_message.embeds[0]
+            rejected_embed.title = "❌ تم رفض طلب الترقية الإدارية"
+            rejected_embed.color = discord.Color.red()
+            rejected_embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
+            rejected_embed.add_field(name="🛡️ المسؤول الرافض", value=interaction.user.mention, inline=True)
+            await self.request_message.edit(embed=rejected_embed, view=None)
+        except Exception:
             pass
 
         await asyncio.sleep(2.5)
         
-        reject_channel = interaction.guild.get_channel(PROMOTION_REQUEST_CHANNEL)
-        if reject_channel:
-            embed = discord.Embed(
-                title="❌ رفض طلب ترقية",
-                description=f"تم رفض طلب الترقية المقدم من {self.target_member.mention}",
-                color=discord.Color.from_rgb(200, 0, 0),
-                timestamp=now_utc()
-            )
-            embed.add_field(name="👤 العضو", value=self.target_member.mention, inline=True)
-            embed.add_field(name="🆔 الآيدي", value=f"`{self.target_member.id}`", inline=True)
-            embed.add_field(name="🔺 الرتبة الحالية", value=self.current_role.mention if self.current_role else "لا يوجد", inline=True)
-            embed.add_field(name="🎯 الرتبة المطلوبة", value=self.next_role.mention if self.next_role else "لا يوجد", inline=True)
-            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
-            embed.add_field(name="🛡️ المسؤول", value=interaction.user.mention, inline=True)
-            embed.set_thumbnail(url=self.target_member.display_avatar.url)
-            await reject_channel.send(content=self.target_member.mention, embed=embed)
-
         try:
             await self.target_member.send(f"❌ تم رفض طلب ترقيتك إلى رتبة **{self.next_role.name}** بسبب: {self.reason.value}")
         except discord.HTTPException:
             pass
 
-        await interaction.response.send_message("✅ تم رفض طلب الترقية بنجاح.", ephemeral=True)
+        await interaction.response.send_message("✅ تم رفض طلب الترقية بنجاح وتحديث الطلب بالشات.", ephemeral=True)
 
 
 class PromotionDecisionView(discord.ui.View):
@@ -486,7 +480,6 @@ class PromotionDecisionView(discord.ui.View):
 
     @discord.ui.button(label="قبول الترقية", style=discord.ButtonStyle.success, custom_id="promo:accept")
     async def accept_promo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # التحقق الدقيق من رتب التحكم الثلاثة المطلوبة حصراً
         if not has_any_role(interaction.user, ALLOWED_DECISION_ROLES):
             await interaction.response.send_message("❌ لا تملك الرتب الإدارية المخصصة لقبول أو رفض الترقيات.", ephemeral=True)
             return
@@ -513,9 +506,14 @@ class PromotionDecisionView(discord.ui.View):
         requirements[str(member.id)] = 0
         save_json(REQUIRE_FILE, requirements)
 
+        # تعديل رسالة الطلب الحالية لسحب الأزرار ووسمها بـ مقبولة بدلاً من الحذف!
         try:
-            await interaction.message.delete()
-        except discord.HTTPException:
+            accepted_embed = interaction.message.embeds[0]
+            accepted_embed.title = "🎉 تم قبول طلب الترقية والموافقة"
+            accepted_embed.color = discord.Color.green()
+            accepted_embed.add_field(name="🛡️ المسؤول المعتمد", value=interaction.user.mention, inline=True)
+            await interaction.message.edit(embed=accepted_embed, view=None)
+        except Exception:
             pass
 
         await asyncio.sleep(2.5)
@@ -598,7 +596,6 @@ class PromotionPanel(discord.ui.View):
         
         req_channel = guild.get_channel(PROMOTION_REQUEST_CHANNEL)
         if req_channel:
-            # بطاقة الإشعار المنسقة والمطابقة للتصميم المطلوب تماماً
             embed = discord.Embed(
                 title="📥 طلب ترقية إدارية جديد",
                 description="قام أحد أعضاء الإدارة بتقديم طلب ترقية رسمي عبر اللوحة الموحدة.",
@@ -612,13 +609,13 @@ class PromotionPanel(discord.ui.View):
             embed.set_thumbnail(url=member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات التلقائي")
             
-            # إرسال الطلب أولاً
+            # إرسال بطاقة طلب الترقية (باقية في الشات ولن تُحذف)
             await req_channel.send(embed=embed, view=PromotionDecisionView(member.id, current_role_id, next_role_id))
             
-            # سحب وإرسال لوحة جديدة تحت الطلب مباشرة لتنزل بالأسفل تلقائياً
+            # استدعاء دالة التنزيل التي تسحب الأزرار من اللوحة السابقة وترسل واحدة جديدة في الأسفل
             await send_continuous_promotion_panel(guild)
             
-            await interaction.followup.send("✅ تم رفع طلب ترقيتك ونزلت اللوحة تلقائياً بالأسفل.", ephemeral=True)
+            await interaction.followup.send("✅ تم رفع طلب ترقيتك بنجاح ونزلت اللوحة تلقائياً بالأسفل.", ephemeral=True)
         else:
             await interaction.followup.send("❌ تعذر العثور على الروم بالوقت الحالي.", ephemeral=True)
 
@@ -826,7 +823,7 @@ def build_top_embed(guild: discord.Guild):
     embed = discord.Embed(title="أعلى المتفاعلين", color=discord.Color.gold(), timestamp=now_utc())
 
     if not points:
-        embed.description = "لا توجد نقاط حاليًا."
+        embed.description = "لا توجد نقاط حالياً."
         return embed
 
     sorted_points = sorted(points.items(), key=lambda item: item[1], reverse=True)[:10]
@@ -859,7 +856,7 @@ async def promotion_panel_isolated_cmd(ctx: commands.Context):
 
 
 # ===============================================
-# EVENTS & POINTS (تم إزالة لوقات الكتابة الفورية بالكامل)
+# EVENTS & POINTS
 # ===============================================
 
 @bot.event
@@ -1042,7 +1039,7 @@ async def check_monthly_activity():
                     embed = discord.Embed(title="🚨 إنذار عدم تفاعل تلقائي (شهري)", color=discord.Color.red(), timestamp=current_time)
                     embed.add_field(name="العضو المعاقب", value=member.mention, inline=True)
                     embed.add_field(name="نقاطك الإجمالية للشهر", value=f"`{user_points} / 500`", inline=True)
-                    embed.add_field(name="مدة العقوبة", value="`3 أيام` (72 ساعة)", inline=True)
+                    embed.add_field(name="مدة العقوبة", value="`3 أيام` (72 ساعت)", inline=True)
                     embed.set_thumbnail(url=member.display_avatar.url)
                     
                     await asyncio.sleep(2.5)
@@ -1320,9 +1317,6 @@ async def on_ready():
     if not check_tempbans.is_running(): check_tempbans.start()
     if not check_monthly_activity.is_running(): check_monthly_activity.start()
     if not check_expired_activity_warnings.is_running(): check_expired_activity_warnings.start()
-
-    for guild in bot.guilds:
-        await send_continuous_promotion_panel(guild)
 
     print(f"Logged in as {bot.user}")
 
