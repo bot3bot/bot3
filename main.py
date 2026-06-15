@@ -480,7 +480,8 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
             embed.add_field(name="🆔 الآيدي", value=f"`{self.target_member.id}`", inline=True)
             embed.add_field(name="🔺 الرتبة الحالية", value=self.current_role.mention if self.current_role else "لا يوجد", inline=True)
             embed.add_field(name="🎯 الرتبة المطلوبة", value=self.next_role.mention if self.next_role else "لا يوجد", inline=True)
-            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
+            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}
+```", inline=False)
             embed.add_field(name="🛡️ المسؤول", value=interaction.user.mention, inline=True)
             embed.set_thumbnail(url=self.target_member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات الآلي الاحترافي")
@@ -610,7 +611,7 @@ class PromotionPanel(discord.ui.View):
 
         _, total_req = get_user_points(member.id)
 
-        # حذف الأزرار القديمة مباشرة لتختفي من اللوحة السابقة
+        # حذف اللوحة الحالية فوراً حتى يمنع تكرار طلب العضو للترقية من نفس المكان
         try:
             await interaction.message.delete()
         except discord.HTTPException:
@@ -618,7 +619,7 @@ class PromotionPanel(discord.ui.View):
 
         await asyncio.sleep(1.0)
 
-        # إعادة إرسال لوحة الترقية الجديدة النظيفة في الأسفل تلقائياً للحفاظ على التنظيم
+        # تحديث التنزيل لأسفل: إعادة إرسال لوحة الترقية النظيفة لتبقى بآخر الشات دائماً للأعضاء الآخرين
         new_panel_embed = discord.Embed(
             title="🔺 لوحة طلب الترقيات الإدارية الآلية",
             description="من خلال هذه اللوحة يمكنك فحص مجموع نقاط ترقيتك الحالية، وتقديم طلب ترقية رسمي ومباشر لتتم مراجعته والموافقة عليه تلقائياً من قبل الإدارة العليا.",
@@ -626,8 +627,8 @@ class PromotionPanel(discord.ui.View):
         )
         await interaction.channel.send(embed=new_panel_embed, view=PromotionPanel())
 
-        # رفع الطلب إلى روم استقبال الطلبات الإدارية
-        req_channel = guild.get_channel(PROMOTION_REQUEST_CHANNEL)
+        # رفع وعرض إمبيد الطلب الفخم مع أزرار التحكم في روم استقبال طلبات الترقية المحدد
+        req_channel = guild.get_channel(PROMOTION_PANEL_CHANNEL)  # تم التعديل للإرسال في روم لوحة طلب الترقية 1497203612432990259
         if req_channel:
             embed = discord.Embed(
                 title="📥 طلب ترقية إدارية جديد",
@@ -1672,7 +1673,7 @@ async def handle_hacked_protection(message: discord.Message):
         pass
 
     try:
-        await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (حساب مهكر)", delete_message_days=1)
+        await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (ح حساب مهكر)", delete_message_days=1)
         
         tempbans = load_json(TEMPBANS_FILE)
         unban_time = now_utc() + datetime.timedelta(days=1)
