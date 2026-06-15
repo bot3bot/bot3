@@ -52,7 +52,7 @@ POINT_CHANNEL = 1497204458680090779
 INTERACTION_PANEL_CHANNEL = 1497642199859593388
 KEYWORD_CHANNEL = 1497911384191668254
 INTERACTION_LOG_CHANNEL = 1515887367733514310 
-PROMOTION_PANEL_CHANNEL = 1497203612432990259  # روم لوحة طلب الترقية المنفصل الجديد الثابت والمنظم
+PROMOTION_PANEL_CHANNEL = 1497203612432990259  # الروم المخصص لإرسال واستقبال لوحات طلبات الترقية
 
 # الترقية واللوقات
 PROMOTION_REQUEST_CHANNEL = 1515887083623809214 
@@ -96,7 +96,7 @@ ADMIN_ROLES = {
     1478971845729583276,
 }
 
-# الرتب المحددة والوحيدة المصرح لها بقبول ورفض الترقية
+# الرتب المحددة والوحيدة المصرح لها بقبول ورفض الترقية حسب طلبك الجديد
 PROMOTION_ADMIN_ROLES = {
     1478971845729583276,
     1490386915629989948,
@@ -442,9 +442,9 @@ async def leave_panel(ctx: commands.Context):
     await ctx.send(embed=embed, view=LeaveView())
 
 
-# =========================
-# PROMOTION SYSTEM 
-# =========================
+# ====================================
+# PROMOTION SYSTEM (UPDATED RESOLUTION)
+# ====================================
 
 class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية"):
     reason = discord.ui.TextInput(label="السبب", style=discord.TextStyle.paragraph, required=True, max_length=300)
@@ -575,7 +575,7 @@ class PromotionDecisionView(discord.ui.View):
 
 
 # ====================================
-# NEW SEPARATED PROMOTION PANEL VIEW
+# NEW ISOLATED PROMOTION PANEL VIEW (AUTO-REPLACE)
 # ====================================
 
 class PromotionPanel(discord.ui.View):
@@ -611,7 +611,7 @@ class PromotionPanel(discord.ui.View):
 
         _, total_req = get_user_points(member.id)
 
-        # حذف اللوحة الحالية فوراً حتى يمنع تكرار طلب العضو للترقية من نفس المكان
+        # 1. حذف أزرار اللوحة السابقة لكي تختفي نهائياً كما طلبت بالصورة الثانية
         try:
             await interaction.message.delete()
         except discord.HTTPException:
@@ -619,7 +619,7 @@ class PromotionPanel(discord.ui.View):
 
         await asyncio.sleep(1.0)
 
-        # تحديث التنزيل لأسفل: إعادة إرسال لوحة الترقية النظيفة لتبقى بآخر الشات دائماً للأعضاء الآخرين
+        # 2. إرسال لوحة الترقية النظيفة تحت مباشرة لكي يتمكن الجميع من الاستخدام المباشر
         new_panel_embed = discord.Embed(
             title="🔺 لوحة طلب الترقيات الإدارية الآلية",
             description="من خلال هذه اللوحة يمكنك فحص مجموع نقاط ترقيتك الحالية، وتقديم طلب ترقية رسمي ومباشر لتتم مراجعته والموافقة عليه تلقائياً من قبل الإدارة العليا.",
@@ -627,8 +627,8 @@ class PromotionPanel(discord.ui.View):
         )
         await interaction.channel.send(embed=new_panel_embed, view=PromotionPanel())
 
-        # رفع وعرض إمبيد الطلب الفخم مع أزرار التحكم في روم استقبال طلبات الترقية المحدد
-        req_channel = guild.get_channel(PROMOTION_PANEL_CHANNEL)  # تم التعديل للإرسال في روم لوحة طلب الترقية 1497203612432990259
+        # 3. إرسال طلب الترقية لروم استقبال الطلبات للمسؤولين
+        req_channel = guild.get_channel(PROMOTION_REQUEST_CHANNEL)
         if req_channel:
             embed = discord.Embed(
                 title="📥 طلب ترقية إدارية جديد",
@@ -892,7 +892,7 @@ async def interaction_panel_cmd(ctx: commands.Context):
 
 
 # ==========================================
-# NEW SEPARATED PROMOTION COMMAND PANEL
+# COMMAND TO INITIATE THE ISOLATED PROMOTION PANEL
 # ==========================================
 
 @bot.command(name="لوحة_الترقية")
@@ -1654,7 +1654,7 @@ async def handle_hacked_protection(message: discord.Message):
     if log_channel:
         embed = discord.Embed(
             title="🛡️ نظام حماية السيرفر | حظر تلقائي للروم المحمي",
-            description=f"تم رصد إرسال غير مصرح به in روم {message.channel.mention} وتم التعامل مع العضو مباشرة.",
+            description=f"تم رصد إرسال غير مصرح به في روم {message.channel.mention} وتم التعامل مع العضو مباشرة.",
             color=discord.Color.from_rgb(200, 0, 0),
             timestamp=now_utc()
         )
@@ -1673,7 +1673,7 @@ async def handle_hacked_protection(message: discord.Message):
         pass
 
     try:
-        await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (ح حساب مهكر)", delete_message_days=1)
+        await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (حساب مهكر)", delete_message_days=1)
         
         tempbans = load_json(TEMPBANS_FILE)
         unban_time = now_utc() + datetime.timedelta(days=1)
@@ -1726,7 +1726,7 @@ async def on_ready():
     bot.add_view(LeaveView())
     bot.add_view(InteractionPanel())
     bot.add_view(WarningPanel())
-    bot.add_view(PromotionPanel())  # تسجيل اللوحة المنفصلة التلقائية والمحدثة لتعمل بشكل مستمر عند الريستارت
+    bot.add_view(PromotionPanel())  # تفعيل واستقبال لوحة الترقية المنفصلة تلقائياً عند إعادة التشغيل لضمان ثبات الأزرار دائماً
     bot.add_view(PromotionDecisionView(0, 0, 0)) 
 
     if not auto_reset_leaves.is_running():
