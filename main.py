@@ -47,18 +47,19 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # CHANNELS / ROLES
 # =========================
 
-# التفاعل
+# التفاعل والترقيت منفصلة
 POINT_CHANNEL = 1497204458680090779
 INTERACTION_PANEL_CHANNEL = 1497642199859593388
 KEYWORD_CHANNEL = 1497911384191668254
-INTERACTION_LOG_CHANNEL = 1515887367733514310 # روم لوقات التفاعل الجديد
+INTERACTION_LOG_CHANNEL = 1515887367733514310 
+PROMOTION_PANEL_CHANNEL = 1497203612432990259  # روم لوحة طلب الترقية المنفصل الجديد
 
-# الترقية واللوقات الجديدة
-PROMOTION_REQUEST_CHANNEL = 1515887083623809214 # روم طلبات ورفض الترقية
-PROMOTION_ACCEPT_CHANNEL = 1515887281205018654  # روم قبول الترقية
-RESET_REQUIREMENT_LOG_CHANNEL = 1515887139181822072 # روم لوق تصفير ترقية عضو
-DOUBLE_LOG_CHANNEL = 1515887206902927370       # روم لوق تفعيل/إيقاف الدبل
-RESET_ALL_LOG_CHANNEL = 1515887982765408426    # روم لوق تصفير الكل
+# الترقية واللوقات
+PROMOTION_REQUEST_CHANNEL = 1515887083623809214 
+PROMOTION_ACCEPT_CHANNEL = 1515887281205018654  
+RESET_REQUIREMENT_LOG_CHANNEL = 1515887139181822072 
+DOUBLE_LOG_CHANNEL = 1515887206902927370       
+RESET_ALL_LOG_CHANNEL = 1515887982765408426    
 
 # الإجازات
 LEAVE_CHANNEL = 1490070238270718013
@@ -144,7 +145,7 @@ TEMPBANS_FILE = DATA_DIR / "tempbans.json"
 ACTIVITY_WARNINGS_FILE = DATA_DIR / "activity_warnings.json" 
 SYSTEM_CONFIG_FILE = DATA_DIR / "system_config.json"         
 
-# متناوب تتبع الرسائل النصية (مرة يحسب ومرة لا)
+# متناوب تتبع الرسائل النصية
 alternating_messages = {}
 
 
@@ -431,7 +432,7 @@ async def leave_panel(ctx: commands.Context):
 
 
 # =========================
-# PROMOTION SYSTEM (NEW)
+# PROMOTION SYSTEM 
 # =========================
 
 class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية"):
@@ -445,7 +446,6 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
         self.request_message = request_message
 
     async def on_submit(self, interaction: discord.Interaction):
-        # تعطيل الأزرار أو مسح رسالة الطلب تلقائياً لمنع التكرار والتنظيم الإداري
         try:
             await self.request_message.delete()
         except discord.HTTPException:
@@ -453,7 +453,6 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
 
         await asyncio.sleep(2.5)
         
-        # إرسال لوق الرفض في روم طلبات ورفض الترقية مع منشن الشخص المعني
         reject_channel = interaction.guild.get_channel(PROMOTION_REQUEST_CHANNEL)
         if reject_channel:
             embed = discord.Embed(
@@ -472,7 +471,6 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
             embed.set_footer(text="نظام الترقيات الآلي الاحترافي")
             await reject_channel.send(content=self.target_member.mention, embed=embed)
 
-        # إخطار العضو في الخاص
         try:
             await self.target_member.send(f"❌ تم رفض طلب ترقيتك إلى رتبة **{self.next_role.name}** بسبب: {self.reason.value}")
         except discord.HTTPException:
@@ -503,7 +501,6 @@ class PromotionDecisionView(discord.ui.View):
         current_role = guild.get_role(self.current_role_id)
         next_role = guild.get_role(self.next_role_id)
 
-        # تنفيذ التغيير الفعلي للرتب
         try:
             if current_role and current_role in member.roles:
                 await member.remove_roles(current_role, reason="ترقية إدارية آلياً")
@@ -513,12 +510,10 @@ class PromotionDecisionView(discord.ui.View):
             await interaction.response.send_message("❌ صلاحيات البوت لا تسمح بتعديل رتب هذا العضو.", ephemeral=True)
             return
 
-        # تصفير نقاط الترقية تلقائياً بعد القبول
         requirements = load_json(REQUIRE_FILE)
         requirements[str(member.id)] = 0
         save_json(REQUIRE_FILE, requirements)
 
-        # حذف رسالة الطلب للتنظيم
         try:
             await interaction.message.delete()
         except discord.HTTPException:
@@ -526,7 +521,6 @@ class PromotionDecisionView(discord.ui.View):
 
         await asyncio.sleep(2.5)
 
-        # إرسال لوق القبول والمنشن
         accept_channel = guild.get_channel(PROMOTION_ACCEPT_CHANNEL)
         if accept_channel:
             embed = discord.Embed(
@@ -562,6 +556,77 @@ class PromotionDecisionView(discord.ui.View):
         next_role = guild.get_role(self.next_role_id)
 
         await interaction.response.send_modal(RejectPromotionModal(member, current_role, next_role, interaction.message))
+
+
+# ====================================
+# NEW SEPARATED PROMOTION PANEL VIEW
+# ====================================
+
+class PromotionPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="طلب ترقية 🔺", style=discord.ButtonStyle.primary, custom_id="promo_panel:request")
+    async def request_promotion_isolated(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.guild
+        member = interaction.user
+
+        current_role_id = None
+        current_index = -1
+
+        for idx, role_id in enumerate(PROMOTION_ROLES):
+            role = guild.get_role(role_id)
+            if role and role in member.roles:
+                current_role_id = role_id
+                current_index = idx
+                break
+
+        if current_index == -1:
+            await interaction.response.send_message("❌ لا تملك أي رتبة إدارية مسجلة بنظام الترقيات.", ephemeral=True)
+            return
+
+        if current_index == len(PROMOTION_ROLES) - 1:
+            await interaction.response.send_message("👑 أنت في الرتبة الإدارية العليا بالفعل، لا توجد ترقيات أخرى!", ephemeral=True)
+            return
+
+        next_role_id = PROMOTION_ROLES[current_index + 1]
+        current_role = guild.get_role(current_role_id)
+        next_role = guild.get_role(next_role_id)
+
+        _, total_req = get_user_points(member.id)
+
+        await asyncio.sleep(2.5)
+        req_channel = guild.get_channel(PROMOTION_REQUEST_CHANNEL)
+        if req_channel:
+            embed = discord.Embed(
+                title="📥 طلب ترقية إدارية جديد",
+                description="قام أحد أعضاء الإدارة بتقديم طلب ترقية عبر اللوحة المنفصلة.",
+                color=discord.Color.from_rgb(30, 144, 255),
+                timestamp=now_utc()
+            )
+            embed.add_field(name="👤 مقدم الطلب", value=member.mention, inline=True)
+            embed.add_field(name="📈 نقاط الترقية الحالية", value=f"`{total_req}` نقطة", inline=True)
+            embed.add_field(name="🔺 الرتبة الحالية", value=current_role.mention if current_role else "خطأ في الجلب", inline=True)
+            embed.add_field(name="🎯 الرتبة المطلوبة", value=next_role.mention if next_role else "خطأ في الجلب", inline=True)
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text="نظام الترقيات واللوحات المنفصلة الاحترافية")
+            
+            await req_channel.send(embed=embed, view=PromotionDecisionView(member.id, current_role_id, next_role_id))
+            await interaction.response.send_message("✅ تم رفع طلب ترقيتك إلى الإدارة العليا وجاري المراجعة الآن.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ تعذر العثور على روم استقبال طلبات الترقية بالوقت الحالي.", ephemeral=True)
+
+    @discord.ui.button(label="نقاط الترقية حقتي 📈", style=discord.ButtonStyle.secondary, custom_id="promo_panel:my_points")
+    async def my_promotion_points(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if has_any_role(interaction.user, {EXEMPTED_ACTIVITY_ROLE}):
+            await interaction.response.send_message("ℹ️ أنت تملك رتبة مستثناة من نظام التفاعل والترقيات بالكامل.", ephemeral=True)
+            return
+        _, req = get_user_points(interaction.user.id)
+        embed = discord.Embed(title="📈 نقاط الترقية الحالية", color=discord.Color.blue(), timestamp=now_utc())
+        embed.add_field(name="الإداري", value=interaction.user.mention, inline=False)
+        embed.add_field(name="نقاط الترقية المتوفرة", value=f"`{req}` نقطة", inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # =========================
@@ -701,58 +766,6 @@ class InteractionPanel(discord.ui.View):
     async def top_points_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_top_embed(interaction.guild), ephemeral=False)
 
-    @discord.ui.button(label="طلب ترقية 🔺", style=discord.ButtonStyle.primary, custom_id="points:request_promo", row=0)
-    async def request_promotion_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = interaction.guild
-        member = interaction.user
-
-        # تحديد رتبة العضو الحالية بالتسلسل الإداري المتوفر لدينا
-        current_role_id = None
-        current_index = -1
-
-        for idx, role_id in enumerate(PROMOTION_ROLES):
-            role = guild.get_role(role_id)
-            if role and role in member.roles:
-                current_role_id = role_id
-                current_index = idx
-                break
-
-        if current_index == -1:
-            await interaction.response.send_message("❌ لا تملك أي رتبة إدارية مسجلة بنظام الترقيات.", ephemeral=True)
-            return
-
-        if current_index == len(PROMOTION_ROLES) - 1:
-            await interaction.response.send_message("👑 أنت في الرتبة الإدارية العليا بالفعل، لا توجد ترقيات أخرى مخرونة!", ephemeral=True)
-            return
-
-        next_role_id = PROMOTION_ROLES[current_index + 1]
-        current_role = guild.get_role(current_role_id)
-        next_role = guild.get_role(next_role_id)
-
-        _, total_req = get_user_points(member.id)
-
-        await asyncio.sleep(2.5)
-        # إرسال لوحة اتخاذ القرار في روم طلبات الترقية
-        req_channel = guild.get_channel(PROMOTION_REQUEST_CHANNEL)
-        if req_channel:
-            embed = discord.Embed(
-                title="📥 طلب ترقية إدارية جديد",
-                description="قام أحد أعضاء الإدارة بتقديم طلب ترقية عبر اللوحة.",
-                color=discord.Color.from_rgb(30, 144, 255),
-                timestamp=now_utc()
-            )
-            embed.add_field(name="👤 مقدم الطلب", value=member.mention, inline=True)
-            embed.add_field(name="📈 نقاط الترقية الحالية", value=f"`{total_req}` نقطة", inline=True)
-            embed.add_field(name="🔺 الرتبة الحالية", value=current_role.mention if current_role else "خطأ في الجلب", inline=True)
-            embed.add_field(name="🎯 الرتبة المطلوبة", value=next_role.mention if next_role else "خطأ في الجلب", inline=True)
-            embed.set_thumbnail(url=member.display_avatar.url)
-            embed.set_footer(text="يرجى مراجعة نقاط العضو ثم اتخاذ القرار التلقائي")
-            
-            await req_channel.send(embed=embed, view=PromotionDecisionView(member.id, current_role_id, next_role_id))
-            await interaction.response.send_message("✅ تم رفع طلب ترقيتك إلى الإدارة العليا وجاري المراجعة الآن.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ تعذر العثور على روم استقبال طلبات الترقية بالوقت الحالي.", ephemeral=True)
-
     @discord.ui.button(label="إضافة نقاط", style=discord.ButtonStyle.secondary, custom_id="points:add", row=1)
     async def add_points_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddPointsModal())
@@ -839,11 +852,31 @@ async def interaction_panel_cmd(ctx: commands.Context):
         return
 
     embed = discord.Embed(
-        title="لوحة إدارة التفاعل والترقيات المحدثة",
-        description="إدارة نقاط التفاعل والترقية، تقديم طلبات الترقية، التحكم بالدبل واللوقات الفورية الاحترافية.",
+        title="لوحة إدارة التفاعل والأعضاء العامة",
+        description="إدارة نقاط التفاعل، التحكم بالدبل واللوقات الفورية والعمليات الأساسية.",
         color=discord.Color.dark_teal(),
     )
     await ctx.send(embed=embed, view=InteractionPanel())
+
+
+# ==========================================
+# NEW SEPARATED PROMOTION COMMAND PANEL
+# ==========================================
+
+@bot.command(name="لوحة_الترقية")
+async def promotion_panel_isolated_cmd(ctx: commands.Context):
+    if ctx.channel.id != PROMOTION_PANEL_CHANNEL:
+        return
+
+    if not is_admin(ctx.author):
+        return
+
+    embed = discord.Embed(
+        title="🔺 لوحة طلب الترقيات الإدارية الآلية",
+        description="من خلال هذه اللوحة يمكنك فحص مجموع نقاط ترقيتك الحالية، وتقديم طلب ترقية رسمي ومباشر لتتم مراجعته والموافقة عليه تلقائياً من قبل الإدارة العليا.",
+        color=discord.Color.from_rgb(30, 144, 255),
+    )
+    await ctx.send(embed=embed, view=PromotionPanel())
 
 
 # =========================
@@ -877,23 +910,19 @@ async def handle_message_points(message: discord.Message):
 
     uid = str(message.author.id)
 
-    # معالجة نظام احتساب التفاعل المتناوب (رسالة ورسالة لا)
     if uid not in alternating_messages:
-        alternating_messages[uid] = True  # True يعني جاهز للاحتساب
+        alternating_messages[uid] = True  
 
     if alternating_messages[uid]:
-        # احتساب الرسالة الحالية
         double_active = load_json(DOUBLE_FILE, {"active": False}).get("active")
         text_amount = DOUBLE_TEXT_POINTS if double_active else TEXT_POINTS
         add_points_to_user(message.author.id, text_amount, message.guild)
-        alternating_messages[uid] = False  # جعل الرسالة القادمة مهملة
+        alternating_messages[uid] = False  
     else:
-        # تجاوز هذه الرسالة وعكس المؤشر للرسالة القادمة لتُحسب
         alternating_messages[uid] = True
         if message.channel.id != KEYWORD_CHANNEL:
             return
 
-    # معالجة روم الكلمات المفتاحية بالكامل
     if message.channel.id != KEYWORD_CHANNEL:
         return
 
@@ -918,7 +947,6 @@ async def handle_message_points(message: discord.Message):
         
         await asyncio.sleep(2.5)
         
-        # الرد التفاعلي الاحترافي المطابق لتنسيق ألوان وأسلوب الصورة المرفقة
         embed_reply = discord.Embed(
             title="🛡️ نظام حماية السيرفر | تسجيل التفاعل المعتمد",
             description=f"تم رصد تسجيل مادة تفاعلية صالحة في روم {message.channel.mention} واحتساب النقاط تلقائياً.",
@@ -934,7 +962,6 @@ async def handle_message_points(message: discord.Message):
         
         await message.reply(embed=embed_reply, mention_author=False)
 
-        # إرسال اللوق فورا في روم لوقات التفاعل الجديد المحدد
         log_channel = message.guild.get_channel(INTERACTION_LOG_CHANNEL)
         if log_channel:
             embed_log = discord.Embed(
@@ -1143,13 +1170,11 @@ async def check_monthly_activity():
         next_check = current_time + datetime.timedelta(days=30)
         config["next_activity_check"] = next_check.timestamp()
         save_json(SYSTEM_CONFIG_FILE, config)
-        print(f"[Activity System] تم بدء دورة الـ 30 يوم الجديدة. الفحص القادم: {next_check}")
         return
 
     if current_time.timestamp() < config["next_activity_check"]:
         return
 
-    print("[Activity System] حان موعد فحص التفاعل الشهري التلقائي...")
     activity_warnings = load_json(ACTIVITY_WARNINGS_FILE)
     points = load_json(POINT_FILE)
     expires_at = current_time + datetime.timedelta(days=3)  
@@ -1669,7 +1694,8 @@ async def on_ready():
     bot.add_view(LeaveView())
     bot.add_view(InteractionPanel())
     bot.add_view(WarningPanel())
-    bot.add_view(PromotionDecisionView(0, 0, 0)) # تسجيل مسبق للأزرار الثابتة للترقيات
+    bot.add_view(PromotionPanel())  # تسجيل اللوحة المنفصلة الجديدة لتعمل بشكل مستمر عند الريستارت
+    bot.add_view(PromotionDecisionView(0, 0, 0)) 
 
     if not auto_reset_leaves.is_running():
         auto_reset_leaves.start()
