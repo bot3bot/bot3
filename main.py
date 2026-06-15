@@ -99,7 +99,7 @@ EXCEPTED_PROTECTION_ROLES = {
     EXEMPTED_ACTIVITY_ROLE, # إضافة الرتبة الجديدة للاستثناء من باند الحماية أيضاً كأمان إضافي
 }
 
-# تعديل قيم النقاط بناءً على طلبك
+# قيم النقاط بعد التعديل
 TEXT_POINTS = 1
 DOUBLE_TEXT_POINTS = 2
 VOICE_POINTS_EVERY_5_MINUTES = 5
@@ -854,15 +854,14 @@ async def double_off(ctx: commands.Context):
 
 
 # =========================
-# AUTOMATIC ACTIVITY CHECK MONTHLY (MODIFIED)
+# AUTOMATIC ACTIVITY CHECK MONTHLY
 # =========================
 
-@tasks.loop(minutes=30)  # الفحص المتكرر كل نصف ساعة للتحقق من انقضاء الـ 30 يوماً بدقة وثبات
+@tasks.loop(minutes=30)
 async def check_monthly_activity():
     config = load_json(SYSTEM_CONFIG_FILE)
     current_time = now_utc()
     
-    # إذا لم تكن هناك نقطة بداية مسجلة (تشغيل البوت لأول مرة)، نعتمد الوقت الحالي كبداية الحساب المستمر
     if "next_activity_check" not in config:
         next_check = current_time + datetime.timedelta(days=30)
         config["next_activity_check"] = next_check.timestamp()
@@ -870,15 +869,13 @@ async def check_monthly_activity():
         print(f"[Activity System] تم بدء دورة الـ 30 يوم الجديدة. الفحص القادم: {next_check}")
         return
 
-    # التحقق مما إذا حان وقت الفحص الفعلي (مرور 30 يوم)
     if current_time.timestamp() < config["next_activity_check"]:
         return
 
-    # تنفيذ العقوبات وتصفير النقاط عند انتهاء الـ 30 يوم
     print("[Activity System] حان موعد فحص التفاعل الشهري التلقائي...")
     activity_warnings = load_json(ACTIVITY_WARNINGS_FILE)
     points = load_json(POINT_FILE)
-    expires_at = current_time + datetime.timedelta(days=3)  # مدة الإنذار 3 أيام
+    expires_at = current_time + datetime.timedelta(days=3)
 
     for guild in bot.guilds:
         warning_channel = guild.get_channel(ACTIVITY_WARNING_CHANNEL)
@@ -888,7 +885,6 @@ async def check_monthly_activity():
             if member.bot:
                 continue
                 
-            # استثناء تام ومطلق لأصحاب الرتبة المستثناة من الفحص والنقاط
             if has_any_role(member, {EXEMPTED_ACTIVITY_ROLE}):
                 continue
 
@@ -898,7 +894,6 @@ async def check_monthly_activity():
             uid = str(member.id)
             user_points = points.get(uid, 0)
 
-            # إذا لم يحقق الـ 500 نقطة المطلوبة خلال الشهر
             if user_points < 500:
                 if punish_role:
                     try:
@@ -928,10 +923,8 @@ async def check_monthly_activity():
                     
                     await warning_channel.send(content=member.mention, embed=embed)
 
-            # تصفير نقاط التفاعل لبدء شهر جديد كلياً
             points[uid] = 0
 
-    # تعيين موعد الفحص التلقائي القادم (بعد 30 يوم من الآن)
     next_check = current_time + datetime.timedelta(days=30)
     config["next_activity_check"] = next_check.timestamp()
     
@@ -1294,18 +1287,16 @@ async def remove_warning(ctx: commands.Context, warning_id: str):
 
 
 # =========================
-# HACKED PROTECTION (WITH ADVANCED LOGGING)
+# HACKED PROTECTION
 # =========================
 
 async def handle_hacked_protection(message: discord.Message):
     if message.author.bot:
         return
 
-    # التحقق من رتب الاستثناء
     if isinstance(message.author, discord.Member) and has_any_role(message.author, EXCEPTED_PROTECTION_ROLES):
         return
 
-    # تحديد نوع الإرسال لتضمينه في اللوق الاحترافي
     has_image = any(
         attachment.content_type and attachment.content_type.startswith("image/")
         for attachment in message.attachments
@@ -1314,16 +1305,13 @@ async def handle_hacked_protection(message: discord.Message):
     if has_image:
         content_type_str = "🖼️ قام بإرسال صورة / مرفق"
     else:
-        content_type_str = f"📝 المحتوى النصي:\n```{message.content}
-```" if message.content.strip() else "❌ محتوى غير معروف"
+        content_type_str = f"📝 المحتوى النصي:\n{message.content}" if message.content.strip() else "❌ محتوى غير معروف"
 
-    # محاولة مسح الرسالة المخترقة فوراً
     try:
         await message.delete()
     except discord.HTTPException:
         pass
 
-    # إرسال اللوق بشكل احترافي جداً في روم اللوقات المحدد
     log_channel = message.guild.get_channel(HACKED_LOG_CHANNEL)
     if log_channel:
         embed = discord.Embed(
@@ -1339,16 +1327,13 @@ async def handle_hacked_protection(message: discord.Message):
         embed.set_thumbnail(url=message.author.display_avatar.url)
         embed.set_footer(text="نظام الأمان واللوقات التلقائي")
         
-        # إرسال اللوق مع المنشن بشكل واضح واحترافي
         await log_channel.send(content=f"🚨 **تنبيه حماية الحسابات المهكرة:** {message.author.mention}", embed=embed)
 
-    # إخطار العضو في الخاص قبل التبنيد
     try:
         await message.author.send("حسابك مهكر الباند يوم")
     except discord.HTTPException:
         pass
 
-    # تنفيذ باند الحظر التلقائي وحفظ البيانات
     try:
         await message.guild.ban(message.author, reason="حماية السيرفر: إرسال في روم محمي (حساب مهكر)", delete_message_days=1)
         
@@ -1408,12 +1393,11 @@ async def on_ready():
         auto_reset_leaves.start()
 
     if not award_voice_points.is_running():
-        auto_reset_leaves.start()
+        award_voice_points.start()
 
     if not check_tempbans.is_running():
         check_tempbans.start()
 
-    # تشغيل نظام الفحص التلقائي لإنذارات التفاعل الشهري الجديد (المُعدّل)
     if not check_monthly_activity.is_running():
         check_monthly_activity.start()
 
