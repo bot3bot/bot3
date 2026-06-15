@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+import random
 from pathlib import Path
 from threading import Thread
 
@@ -98,10 +99,11 @@ EXCEPTED_PROTECTION_ROLES = {
     EXEMPTED_ACTIVITY_ROLE, # إضافة الرتبة الجديدة للاستثناء من باند الحماية أيضاً كأمان إضافي
 }
 
-TEXT_POINTS = 10
-DOUBLE_TEXT_POINTS = 15
-VOICE_POINTS_EVERY_5_MINUTES = 15
-DOUBLE_VOICE_POINTS_EVERY_5_MINUTES = 20
+# تعديل قيم النقاط بناءً على طلبك
+TEXT_POINTS = 1
+DOUBLE_TEXT_POINTS = 2
+VOICE_POINTS_EVERY_5_MINUTES = 5
+DOUBLE_VOICE_POINTS_EVERY_5_MINUTES = 10
 TICKET_POINTS = 25
 IMAGE_POINTS = 10
 
@@ -655,9 +657,11 @@ async def handle_message_points(message: discord.Message):
     if not is_points_member(message.author):
         return
 
-    double_active = load_json(DOUBLE_FILE, {"active": False}).get("active")
-    text_amount = DOUBLE_TEXT_POINTS if double_active else TEXT_POINTS
-    add_points_to_user(message.author.id, text_amount, message.guild)
+    # نظام عشوائي (احتمالية 50%): مرة يحسب ومرة لا
+    if random.choice([True, False]):
+        double_active = load_json(DOUBLE_FILE, {"active": False}).get("active")
+        text_amount = DOUBLE_TEXT_POINTS if double_active else TEXT_POINTS
+        add_points_to_user(message.author.id, text_amount, message.guild)
 
     if message.channel.id != KEYWORD_CHANNEL:
         return
@@ -1310,7 +1314,8 @@ async def handle_hacked_protection(message: discord.Message):
     if has_image:
         content_type_str = "🖼️ قام بإرسال صورة / مرفق"
     else:
-        content_type_str = f"📝 المحتوى النصي:\n```{message.content}```" if message.content.strip() else "❌ محتوى غير معروف"
+        content_type_str = f"📝 المحتوى النصي:\n```{message.content}
+```" if message.content.strip() else "❌ محتوى غير معروف"
 
     # محاولة مسح الرسالة المخترقة فوراً
     try:
@@ -1403,7 +1408,7 @@ async def on_ready():
         auto_reset_leaves.start()
 
     if not award_voice_points.is_running():
-        award_voice_points.start()
+        auto_reset_leaves.start()
 
     if not check_tempbans.is_running():
         check_tempbans.start()
