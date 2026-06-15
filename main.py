@@ -52,7 +52,7 @@ POINT_CHANNEL = 1497204458680090779
 INTERACTION_PANEL_CHANNEL = 1497642199859593388
 KEYWORD_CHANNEL = 1497911384191668254
 INTERACTION_LOG_CHANNEL = 1515887367733514310 
-PROMOTION_PANEL_CHANNEL = 1497203612432990259  # روم لوحة طلب الترقية المنفصل الجديد
+PROMOTION_PANEL_CHANNEL = 1497203612432990259  # روم لوحة طلب الترقية المنفصل الجديد الثابت والمنظم
 
 # الترقية واللوقات
 PROMOTION_REQUEST_CHANNEL = 1515887083623809214 
@@ -96,6 +96,13 @@ ADMIN_ROLES = {
     1478971845729583276,
 }
 
+# الرتب المحددة والوحيدة المصرح لها بقبول ورفض الترقية
+PROMOTION_ADMIN_ROLES = {
+    1478971845729583276,
+    1490386915629989948,
+    1505984803839676466
+}
+
 # رتب الإدارة المعتمدة للترقيات بالتسلسل (من الأولى إلى التاسعة)
 PROMOTION_ROLES = [
     1485560413146841210,  # الرتبة الأولى
@@ -109,7 +116,7 @@ PROMOTION_ROLES = [
     1479624758168653824   # الرتبة التاسعة
 ]
 
-# الرتب المستثناة من باند الحماية التلقائي للحسابات المهكرة
+# الرتب المستثناExplى من باند الحماية التلقائي للحسابات المهكرة
 EXCEPTED_PROTECTION_ROLES = {
     1480443913557905499,
     1482194383515422752,
@@ -180,6 +187,10 @@ def has_any_role(member: discord.Member, role_ids: set[int]) -> bool:
 
 def is_admin(member: discord.Member) -> bool:
     return has_any_role(member, ADMIN_ROLES)
+
+
+def is_promotion_admin(member: discord.Member) -> bool:
+    return has_any_role(member, PROMOTION_ADMIN_ROLES)
 
 
 def is_points_member(member: discord.Member) -> bool:
@@ -446,6 +457,10 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
         self.request_message = request_message
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not is_promotion_admin(interaction.user):
+            await interaction.response.send_message("❌ لا تملك الرتبة الإدارية المطلوبة لرفض طلبات الترقية.", ephemeral=True)
+            return
+
         try:
             await self.request_message.delete()
         except discord.HTTPException:
@@ -465,7 +480,8 @@ class RejectPromotionModal(discord.ui.Modal, title="سبب رفض الترقية
             embed.add_field(name="🆔 الآيدي", value=f"`{self.target_member.id}`", inline=True)
             embed.add_field(name="🔺 الرتبة الحالية", value=self.current_role.mention if self.current_role else "لا يوجد", inline=True)
             embed.add_field(name="🎯 الرتبة المطلوبة", value=self.next_role.mention if self.next_role else "لا يوجد", inline=True)
-            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}```", inline=False)
+            embed.add_field(name="📝 سبب الرفض", value=f"```{self.reason.value}
+```", inline=False)
             embed.add_field(name="🛡️ المسؤول", value=interaction.user.mention, inline=True)
             embed.set_thumbnail(url=self.target_member.display_avatar.url)
             embed.set_footer(text="نظام الترقيات الآلي الاحترافي")
@@ -488,8 +504,8 @@ class PromotionDecisionView(discord.ui.View):
 
     @discord.ui.button(label="قبول الترقية", style=discord.ButtonStyle.success, custom_id="promo:accept")
     async def accept_promo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin(interaction.user):
-            await interaction.response.send_message("❌ لا تملك صلاحية إدارة الترقيات.", ephemeral=True)
+        if not is_promotion_admin(interaction.user):
+            await interaction.response.send_message("❌ لا تملك الرتبة الإدارية المطلوبة للموافقة على طلبات الترقية.", ephemeral=True)
             return
 
         guild = interaction.guild
@@ -542,8 +558,8 @@ class PromotionDecisionView(discord.ui.View):
 
     @discord.ui.button(label="رفض الترقية", style=discord.ButtonStyle.danger, custom_id="promo:reject")
     async def reject_promo(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin(interaction.user):
-            await interaction.response.send_message("❌ لا تملك صلاحية إدارة الترقيات.", ephemeral=True)
+        if not is_promotion_admin(interaction.user):
+            await interaction.response.send_message("❌ لا تملك الرتبة الإدارية المطلوبة لرفض طلبات الترقية.", ephemeral=True)
             return
 
         guild = interaction.guild
@@ -595,7 +611,23 @@ class PromotionPanel(discord.ui.View):
 
         _, total_req = get_user_points(member.id)
 
-        await asyncio.sleep(2.5)
+        # حذف الأزرار القديمة مباشرة لتختفي من اللوحة السابقة
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+
+        await asyncio.sleep(1.0)
+
+        # إعادة إرسال لوحة الترقية الجديدة النظيفة في الأسفل تلقائياً للحفاظ على التنظيم
+        new_panel_embed = discord.Embed(
+            title="🔺 لوحة طلب الترقيات الإدارية الآلية",
+            description="من خلال هذه اللوحة يمكنك فحص مجموع نقاط ترقيتك الحالية، وتقديم طلب ترقية رسمي ومباشر لتتم مراجعته والموافقة عليه تلقائياً من قبل الإدارة العليا.",
+            color=discord.Color.from_rgb(30, 144, 255),
+        )
+        await interaction.channel.send(embed=new_panel_embed, view=PromotionPanel())
+
+        # رفع الطلب إلى روم استقبال الطلبات الإدارية
         req_channel = guild.get_channel(PROMOTION_REQUEST_CHANNEL)
         if req_channel:
             embed = discord.Embed(
@@ -1694,7 +1726,7 @@ async def on_ready():
     bot.add_view(LeaveView())
     bot.add_view(InteractionPanel())
     bot.add_view(WarningPanel())
-    bot.add_view(PromotionPanel())  # تسجيل اللوحة المنفصلة الجديدة لتعمل بشكل مستمر عند الريستارت
+    bot.add_view(PromotionPanel())  # تسجيل اللوحة المنفصلة التلقائية والمحدثة لتعمل بشكل مستمر عند الريستارت
     bot.add_view(PromotionDecisionView(0, 0, 0)) 
 
     if not auto_reset_leaves.is_running():
