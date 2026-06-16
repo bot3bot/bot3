@@ -48,6 +48,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 POINT_CHANNEL = 1497204458680090779
 INTERACTION_PANEL_CHANNEL = 1497642199859593388
 KEYWORD_CHANNEL = 1497911384191668254
+PROMOTION_REQUEST_CHANNEL = 1497203612432990259
 POINTS_ACTION_LOG_CHANNEL = 1516309944129818735
 SPAM_LOG_CHANNEL = 1516295642824310824
 
@@ -66,10 +67,30 @@ ACTIVITY_PUNISHMENT_ROLE = 1514136578883195001
 EXEMPTED_ACTIVITY_ROLE = 1514389169089020125
 
 POINT_ROLES = {
-    1477492633847857252,
     1482194383515422752,
     1480443913557905499,
 }
+
+IMAGE_REVIEW_ROLES = {
+    1477492633847857252,
+}
+
+PROMOTION_REVIEW_ROLES = {
+    1478971845729583276,
+    1490386915629989948,
+    1505984803839676466,
+}
+
+ADMIN_RANK_ORDER = [
+    1485560413146841210,
+    1485549583861022802,
+    1480649204593332324,
+    1485551861334540378,
+    1488591572042780725,
+    1480818082426392637,
+    1480390711651336244,
+    1480391201227280535,
+]
 
 ADMIN_ROLES = {
     1478970736717598840,
@@ -78,7 +99,7 @@ ADMIN_ROLES = {
     1478971845729583276,
 }
 
-PROTECTION_EXEMPT_ROLES = POINT_ROLES | ADMIN_ROLES | {EXEMPTED_ACTIVITY_ROLE}
+PROTECTION_EXEMPT_ROLES = POINT_ROLES | ADMIN_ROLES | IMAGE_REVIEW_ROLES | PROMOTION_REVIEW_ROLES | {EXEMPTED_ACTIVITY_ROLE}
 
 
 # =========================
@@ -150,6 +171,14 @@ def has_any_role(member: discord.Member, role_ids: set[int]) -> bool:
 
 def is_admin(member: discord.Member) -> bool:
     return has_any_role(member, ADMIN_ROLES)
+
+
+def can_review_images(member: discord.Member) -> bool:
+    return is_admin(member) or has_any_role(member, IMAGE_REVIEW_ROLES)
+
+
+def can_review_promotions(member: discord.Member) -> bool:
+    return has_any_role(member, PROMOTION_REVIEW_ROLES)
 
 
 def is_points_member(member: discord.Member) -> bool:
@@ -233,6 +262,37 @@ def get_points(user_id: int):
 def parse_member_id(value: str) -> int | None:
     match = re.search(r"\d{15,25}", value)
     return int(match.group(0)) if match else None
+
+
+def get_guild_icon_url(guild: discord.Guild | None):
+    return guild.icon.url if guild and guild.icon else None
+
+
+def apply_guild_brand(embed: discord.Embed, guild: discord.Guild | None):
+    icon_url = get_guild_icon_url(guild)
+    if icon_url:
+        embed.set_footer(text=guild.name, icon_url=icon_url)
+    return embed
+
+
+def get_admin_rank_progress(member: discord.Member):
+    current_role = None
+    current_index = None
+
+    for index, role_id in enumerate(ADMIN_RANK_ORDER):
+        if any(role.id == role_id for role in member.roles):
+            current_role = member.guild.get_role(role_id)
+            current_index = index
+
+    if current_index is None:
+        next_role = member.guild.get_role(ADMIN_RANK_ORDER[0])
+        return None, next_role
+
+    if current_index + 1 >= len(ADMIN_RANK_ORDER):
+        return current_role, None
+
+    next_role = member.guild.get_role(ADMIN_RANK_ORDER[current_index + 1])
+    return current_role, next_role
 
 
 # =========================
@@ -695,7 +755,22 @@ class RejectImageModal(discord.ui.Modal, title="سبب رفض الصورة"):
             except discord.HTTPException:
                 pass
 
-        await interaction.response.send_message("✅ تم رفض الصورة وإرسال السبب للعضو في الخاص.", ephemeral=True)
+        embed = discord.Embed(
+            title="تم رفض الصورة",
+            description=f"**سبب الرفض:** {self.reason.value}",
+            color=discord.Color.red(),
+            timestamp=now_utc(),
+        )
+        if target:
+            embed.add_field(name="العضو", value=target.mention, inline=True)
+        embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
+
+        if interaction.message and interaction.message.embeds:
+            old_embed = interaction.message.embeds[0]
+            if old_embed.image:
+                embed.set_image(url=old_embed.image.url)
+
+        await interaction.response.edit_message(embed=embed, view=None)
 
 
 class ImageReviewView(discord.ui.View):
@@ -705,7 +780,7 @@ class ImageReviewView(discord.ui.View):
 
     @discord.ui.button(label="قبول", style=discord.ButtonStyle.success, custom_id="image_review:accept")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin(interaction.user):
+        if not can_review_images(interaction.user):
             await interaction.response.send_message("❌ لا تملك صلاحية.", ephemeral=True)
             return
 
@@ -714,22 +789,185 @@ class ImageReviewView(discord.ui.View):
             await interaction.response.send_message("❌ العضو غير موجود أو لا يملك رتبة التفاعل.", ephemeral=True)
             return
 
-        total = change_points_value(POINT_FILE, target.id, IMAGE_POINTS)
-        await send_points_action_log(interaction.guild, interaction.user, target, "قبول صورة ومنح نقاط", IMAGE_POINTS, total)
+        total = change_points_value(REQUIRE_FILE, target.id, IMAGE_POINTS)
+        await send_points_action_log(interaction.guild, interaction.user, target, "قبول صورة ومنح نقاط ترقية", IMAGE_POINTS, total)
         for item in self.children:
             item.disabled = True
+        embed = discord.Embed(
+            title="تم قبول الصورة",
+            description=f"✅ تم منح {target.mention} `{IMAGE_POINTS}` نقاط ترقية بعد قبول الصورة.",
+            color=discord.Color.green(),
+            timestamp=now_utc(),
+        )
+        embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
+        embed.add_field(name="رصيد الترقية", value=f"`{total}`", inline=True)
+        if interaction.message and interaction.message.embeds and interaction.message.embeds[0].image:
+            embed.set_image(url=interaction.message.embeds[0].image.url)
         await interaction.response.edit_message(
-            content=f"✅ تم منح {target.mention} `{IMAGE_POINTS}` نقاط بعد قبول الصورة.",
+            content=None,
+            embed=embed,
             view=self,
         )
 
     @discord.ui.button(label="رفض", style=discord.ButtonStyle.danger, custom_id="image_review:reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_admin(interaction.user):
+        if not can_review_images(interaction.user):
             await interaction.response.send_message("❌ لا تملك صلاحية.", ephemeral=True)
             return
 
         await interaction.response.send_modal(RejectImageModal(self.target_id))
+
+
+# =========================
+# PROMOTION REQUESTS
+# =========================
+
+class PromotionRejectModal(discord.ui.Modal, title="سبب رفض طلب الترقية"):
+    reason = discord.ui.TextInput(label="سبب الرفض", style=discord.TextStyle.paragraph, required=True, max_length=300)
+
+    def __init__(self, target_id: int):
+        super().__init__()
+        self.target_id = target_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        target = interaction.guild.get_member(self.target_id)
+        if target:
+            try:
+                await target.send(f"❌ تم رفض طلب ترقيتك.\n**السبب:** {self.reason.value}")
+            except discord.HTTPException:
+                pass
+
+        embed = discord.Embed(
+            title="طلب ترقية مرفوض",
+            description=f"**سبب الرفض:** {self.reason.value}",
+            color=discord.Color.red(),
+            timestamp=now_utc(),
+        )
+        if target:
+            embed.add_field(name="الإداري", value=target.mention, inline=True)
+            embed.set_thumbnail(url=target.display_avatar.url)
+        embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
+        apply_guild_brand(embed, interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+class PromotionReviewView(discord.ui.View):
+    def __init__(self, target_id: int, current_role_id: int | None, next_role_id: int):
+        super().__init__(timeout=None)
+        self.target_id = target_id
+        self.current_role_id = current_role_id
+        self.next_role_id = next_role_id
+
+    @discord.ui.button(label="قبول الترقية", style=discord.ButtonStyle.success, custom_id="promotion:accept")
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not can_review_promotions(interaction.user):
+            await interaction.response.send_message("❌ لا تملك صلاحية مراجعة الترقيات.", ephemeral=True)
+            return
+
+        target = interaction.guild.get_member(self.target_id)
+        next_role = interaction.guild.get_role(self.next_role_id)
+        current_role = interaction.guild.get_role(self.current_role_id) if self.current_role_id else None
+
+        if not target or not next_role:
+            await interaction.response.send_message("❌ تعذر العثور على العضو أو رتبة الترقية.", ephemeral=True)
+            return
+
+        try:
+            await target.add_roles(next_role, reason=f"قبول طلب ترقية بواسطة {interaction.user}")
+            if current_role:
+                await target.remove_roles(current_role, reason="استبدال رتبة الإدارة بعد الترقية")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحية تعديل رتب هذا العضو.", ephemeral=True)
+            return
+        except discord.HTTPException:
+            await interaction.response.send_message("❌ حدث خطأ أثناء تنفيذ الترقية.", ephemeral=True)
+            return
+
+        try:
+            await target.send(f"✅ تم قبول طلب ترقيتك إلى رتبة {next_role.mention}.")
+        except discord.HTTPException:
+            pass
+
+        total, req = get_points(target.id)
+        embed = discord.Embed(
+            title="طلب ترقية مقبول",
+            description=f"✅ تم قبول ترقية {target.mention}.",
+            color=discord.Color.green(),
+            timestamp=now_utc(),
+        )
+        embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
+        embed.add_field(name="الرتبة الجديدة", value=next_role.mention, inline=True)
+        embed.add_field(name="نقاط الترقية", value=f"`{req}`", inline=True)
+        embed.set_thumbnail(url=target.display_avatar.url)
+        apply_guild_brand(embed, interaction.guild)
+
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="رفض الترقية", style=discord.ButtonStyle.danger, custom_id="promotion:reject")
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not can_review_promotions(interaction.user):
+            await interaction.response.send_message("❌ لا تملك صلاحية مراجعة الترقيات.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(PromotionRejectModal(self.target_id))
+
+
+class PromotionRequestPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="طلب ترقية", style=discord.ButtonStyle.primary, custom_id="promotion:request")
+    async def request_promotion(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_points_member(interaction.user):
+            await interaction.response.send_message("❌ نظام طلب الترقية مخصص للرتب المعتمدة في التفاعل فقط.", ephemeral=True)
+            return
+
+        current_role, next_role = get_admin_rank_progress(interaction.user)
+        if not next_role:
+            await interaction.response.send_message("✅ أنت على أعلى رتبة إدارية حاليًا.", ephemeral=True)
+            return
+
+        total, req = get_points(interaction.user.id)
+        embed = discord.Embed(
+            title="طلب ترقية جديد",
+            description=f"تم إرسال طلب ترقية من {interaction.user.mention}.",
+            color=discord.Color.blurple(),
+            timestamp=now_utc(),
+        )
+        embed.add_field(name="نقاط التفاعل", value=f"`{total}`", inline=True)
+        embed.add_field(name="نقاط الترقية", value=f"`{req}`", inline=True)
+        embed.add_field(name="الرتبة الحالية", value=current_role.mention if current_role else "لا توجد رتبة إدارية", inline=True)
+        embed.add_field(name="الرتبة المطلوبة", value=next_role.mention, inline=True)
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        icon_url = get_guild_icon_url(interaction.guild)
+        if icon_url:
+            embed.set_footer(text=interaction.guild.name, icon_url=icon_url)
+
+        await interaction.channel.send(
+            embed=embed,
+            view=PromotionReviewView(
+                interaction.user.id,
+                current_role.id if current_role else None,
+                next_role.id,
+            ),
+        )
+        await interaction.response.send_message("✅ تم إرسال طلب ترقيتك للمراجعة.", ephemeral=True)
+
+
+@bot.command(name="ترقية")
+async def promotion_panel(ctx: commands.Context):
+    if ctx.channel.id != PROMOTION_REQUEST_CHANNEL:
+        return
+
+    embed = discord.Embed(
+        title="لوحة طلب الترقية",
+        description="اضغط الزر لإرسال طلب ترقية يحتوي على صورتك، نقاط الترقية، رتبتك الحالية، والرتبة المطلوبة.",
+        color=discord.Color.blurple(),
+    )
+    apply_guild_brand(embed, ctx.guild)
+    await ctx.send(embed=embed, view=PromotionRequestPanel())
 
 
 async def handle_message_points(message: discord.Message):
@@ -742,16 +980,38 @@ async def handle_message_points(message: discord.Message):
     )
 
     if message.channel.id == KEYWORD_CHANNEL and has_image:
+        image_attachment = next(
+            (attachment for attachment in message.attachments if attachment.content_type and attachment.content_type.startswith("image/")),
+            None,
+        )
+        review_file = None
+        image_url = None
+        if image_attachment:
+            try:
+                review_file = await image_attachment.to_file(filename=f"review_{message.id}.png")
+                image_url = f"attachment://review_{message.id}.png"
+            except discord.HTTPException:
+                image_url = image_attachment.url
+
         embed = discord.Embed(
             title="مراجعة صورة للتفاعل",
-            description=f"تم استلام صورة من {message.author.mention}. اختر قبول لمنحه `{IMAGE_POINTS}` نقاط أو رفض لإرسال السبب له بالخاص.",
+            description=f"تم استلام صورة من {message.author.mention}. اختر قبول لمنحه `{IMAGE_POINTS}` نقاط ترقية أو رفض لإرسال السبب له بالخاص.",
             color=discord.Color.blurple(),
             timestamp=now_utc(),
         )
         embed.set_author(name=message.author.display_name, icon_url=message.author.display_avatar.url)
-        if message.attachments:
-            embed.set_image(url=message.attachments[0].url)
-        await message.reply(embed=embed, view=ImageReviewView(message.author.id), mention_author=False)
+        if image_url:
+            embed.set_image(url=image_url)
+
+        if review_file:
+            await message.channel.send(embed=embed, view=ImageReviewView(message.author.id), file=review_file)
+        else:
+            await message.channel.send(embed=embed, view=ImageReviewView(message.author.id))
+
+        try:
+            await message.delete()
+        except discord.HTTPException:
+            pass
         return
 
     if message.channel.id in TEXT_POINTS_BLOCKED_CHANNELS:
@@ -811,10 +1071,19 @@ async def award_voice_points():
 @bot.command(name="تفاعل")
 async def show_points(ctx: commands.Context):
     total, req = get_points(ctx.author.id)
-    embed = discord.Embed(title="نقاط التفاعل", color=discord.Color.blue(), timestamp=now_utc())
-    embed.add_field(name="العضو", value=ctx.author.mention, inline=False)
+    embed = discord.Embed(
+        title="ملف التفاعل الإداري",
+        description=f"ملخص نقاط {ctx.author.mention} داخل نظام التفاعل والترقية.",
+        color=discord.Color.blue(),
+        timestamp=now_utc(),
+    )
     embed.add_field(name="نقاط التفاعل", value=f"`{total}`", inline=True)
     embed.add_field(name="نقاط الترقية", value=f"`{req}`", inline=True)
+    embed.add_field(name="حالة الدبل", value="`مفعل`" if double_active() else "`مغلق`", inline=True)
+    embed.set_thumbnail(url=ctx.author.display_avatar.url)
+    icon_url = get_guild_icon_url(ctx.guild)
+    if icon_url:
+        embed.set_author(name=ctx.guild.name, icon_url=icon_url)
     await ctx.send(embed=embed)
 
 
@@ -1215,6 +1484,7 @@ async def on_ready():
     bot.add_view(LeaveView())
     bot.add_view(InteractionPanel())
     bot.add_view(WarningPanel())
+    bot.add_view(PromotionRequestPanel())
 
     if not auto_reset_leaves.is_running():
         auto_reset_leaves.start()
