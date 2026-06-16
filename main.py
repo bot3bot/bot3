@@ -295,6 +295,16 @@ def get_admin_rank_progress(member: discord.Member):
     return current_role, next_role
 
 
+def build_promotion_panel_embed(guild: discord.Guild):
+    embed = discord.Embed(
+        title="لوحة طلب الترقية",
+        description="اضغط الزر لإرسال طلب ترقية يحتوي على صورتك، نقاط الترقية، رتبتك الحالية، والرتبة المطلوبة.",
+        color=discord.Color.blurple(),
+    )
+    apply_guild_brand(embed, guild)
+    return embed
+
+
 # =========================
 # LEAVES
 # =========================
@@ -756,19 +766,16 @@ class RejectImageModal(discord.ui.Modal, title="سبب رفض الصورة"):
                 pass
 
         embed = discord.Embed(
-            title="تم رفض الصورة",
+            title="طلب صورة مرفوض",
             description=f"**سبب الرفض:** {self.reason.value}",
             color=discord.Color.red(),
             timestamp=now_utc(),
         )
         if target:
-            embed.add_field(name="العضو", value=target.mention, inline=True)
+            embed.add_field(name="الإداري", value=target.mention, inline=True)
+            embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
-
-        if interaction.message and interaction.message.embeds:
-            old_embed = interaction.message.embeds[0]
-            if old_embed.image:
-                embed.set_image(url=old_embed.image.url)
+        apply_guild_brand(embed, interaction.guild)
 
         await interaction.response.edit_message(embed=embed, view=None)
 
@@ -794,19 +801,20 @@ class ImageReviewView(discord.ui.View):
         for item in self.children:
             item.disabled = True
         embed = discord.Embed(
-            title="تم قبول الصورة",
-            description=f"✅ تم منح {target.mention} `{IMAGE_POINTS}` نقاط ترقية بعد قبول الصورة.",
+            title="طلب صورة مقبول",
+            description=f"✅ تم قبول صورة {target.mention}.",
             color=discord.Color.green(),
             timestamp=now_utc(),
         )
         embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
+        embed.add_field(name="نقاط الترقية المضافة", value=f"`{IMAGE_POINTS}`", inline=True)
         embed.add_field(name="رصيد الترقية", value=f"`{total}`", inline=True)
-        if interaction.message and interaction.message.embeds and interaction.message.embeds[0].image:
-            embed.set_image(url=interaction.message.embeds[0].image.url)
+        embed.set_thumbnail(url=target.display_avatar.url)
+        apply_guild_brand(embed, interaction.guild)
         await interaction.response.edit_message(
             content=None,
             embed=embed,
-            view=self,
+            view=None,
         )
 
     @discord.ui.button(label="رفض", style=discord.ButtonStyle.danger, custom_id="image_review:reject")
@@ -945,6 +953,11 @@ class PromotionRequestPanel(discord.ui.View):
         if icon_url:
             embed.set_footer(text=interaction.guild.name, icon_url=icon_url)
 
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+
         await interaction.channel.send(
             embed=embed,
             view=PromotionReviewView(
@@ -953,6 +966,7 @@ class PromotionRequestPanel(discord.ui.View):
                 next_role.id,
             ),
         )
+        await interaction.channel.send(embed=build_promotion_panel_embed(interaction.guild), view=PromotionRequestPanel())
         await interaction.response.send_message("✅ تم إرسال طلب ترقيتك للمراجعة.", ephemeral=True)
 
 
@@ -961,13 +975,7 @@ async def promotion_panel(ctx: commands.Context):
     if ctx.channel.id != PROMOTION_REQUEST_CHANNEL:
         return
 
-    embed = discord.Embed(
-        title="لوحة طلب الترقية",
-        description="اضغط الزر لإرسال طلب ترقية يحتوي على صورتك، نقاط الترقية، رتبتك الحالية، والرتبة المطلوبة.",
-        color=discord.Color.blurple(),
-    )
-    apply_guild_brand(embed, ctx.guild)
-    await ctx.send(embed=embed, view=PromotionRequestPanel())
+    await ctx.send(embed=build_promotion_panel_embed(ctx.guild), view=PromotionRequestPanel())
 
 
 async def handle_message_points(message: discord.Message):
@@ -984,14 +992,7 @@ async def handle_message_points(message: discord.Message):
             (attachment for attachment in message.attachments if attachment.content_type and attachment.content_type.startswith("image/")),
             None,
         )
-        review_file = None
-        image_url = None
-        if image_attachment:
-            try:
-                review_file = await image_attachment.to_file(filename=f"review_{message.id}.png")
-                image_url = f"attachment://review_{message.id}.png"
-            except discord.HTTPException:
-                image_url = image_attachment.url
+        image_url = image_attachment.url if image_attachment else None
 
         embed = discord.Embed(
             title="مراجعة صورة للتفاعل",
@@ -1003,10 +1004,7 @@ async def handle_message_points(message: discord.Message):
         if image_url:
             embed.set_image(url=image_url)
 
-        if review_file:
-            await message.channel.send(embed=embed, view=ImageReviewView(message.author.id), file=review_file)
-        else:
-            await message.channel.send(embed=embed, view=ImageReviewView(message.author.id))
+        await message.channel.send(embed=embed, view=ImageReviewView(message.author.id))
 
         try:
             await message.delete()
