@@ -775,6 +775,8 @@ class RejectImageModal(discord.ui.Modal, title="سبب رفض الصورة"):
             embed.add_field(name="الإداري", value=target.mention, inline=True)
             embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(name="المراجع", value=interaction.user.mention, inline=True)
+        if interaction.message and interaction.message.embeds and interaction.message.embeds[0].image:
+            embed.set_image(url=interaction.message.embeds[0].image.url)
         apply_guild_brand(embed, interaction.guild)
 
         await interaction.response.edit_message(embed=embed, view=None)
@@ -810,6 +812,8 @@ class ImageReviewView(discord.ui.View):
         embed.add_field(name="نقاط الترقية المضافة", value=f"`{IMAGE_POINTS}`", inline=True)
         embed.add_field(name="رصيد الترقية", value=f"`{total}`", inline=True)
         embed.set_thumbnail(url=target.display_avatar.url)
+        if interaction.message and interaction.message.embeds and interaction.message.embeds[0].image:
+            embed.set_image(url=interaction.message.embeds[0].image.url)
         apply_guild_brand(embed, interaction.guild)
         await interaction.response.edit_message(
             content=None,
@@ -992,7 +996,17 @@ async def handle_message_points(message: discord.Message):
             (attachment for attachment in message.attachments if attachment.content_type and attachment.content_type.startswith("image/")),
             None,
         )
+        review_file = None
         image_url = image_attachment.url if image_attachment else None
+        if image_attachment:
+            original_name = image_attachment.filename or "image.png"
+            extension = Path(original_name).suffix or ".png"
+            filename = f"review_{message.id}{extension}"
+            try:
+                review_file = await image_attachment.to_file(filename=filename)
+                image_url = f"attachment://{filename}"
+            except discord.HTTPException:
+                image_url = image_attachment.url
 
         embed = discord.Embed(
             title="مراجعة صورة للتفاعل",
@@ -1004,7 +1018,10 @@ async def handle_message_points(message: discord.Message):
         if image_url:
             embed.set_image(url=image_url)
 
-        await message.channel.send(embed=embed, view=ImageReviewView(message.author.id))
+        if review_file:
+            await message.channel.send(embed=embed, view=ImageReviewView(message.author.id), file=review_file)
+        else:
+            await message.channel.send(embed=embed, view=ImageReviewView(message.author.id))
 
         try:
             await message.delete()
