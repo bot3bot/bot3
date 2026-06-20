@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from threading import Thread
 
@@ -47,69 +48,167 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # =========================
 
 LOGIN_RETRY_SECONDS = 1800
+REACTION_ROLES_CHANNEL_ID = 1517791670391934986
+EMOJI_SETUP_CHANNEL_ID = 1480429990628560978
+
 DATA_DIR = Path("data")
 PANEL_FILE = DATA_DIR / "reaction_roles_panel.json"
-REACTION_ROLES_CHANNEL_ID = 1517791670391934986
+EMOJI_FILE = DATA_DIR / "reaction_roles_emojis.json"
 
-ROLE_REACTIONS = {
-    1517795698714611743: {
+GAMES = {
+    "fivem": {
         "label": "فايف ام",
+        "aliases": ["فايف", "فايف ام", "fivem", "five"],
         "role_ids": [1487457268629766376],
     },
-    1517795999945326622: {
+    "bls": {
         "label": "محاكي الحوادث",
+        "aliases": ["محاكي", "محاكي الحوادث", "bls", "beamng"],
         "role_ids": [1495710572023517285],
     },
-    1517796106564669510: {
+    "assetto": {
         "label": "Assetto Corsa",
+        "aliases": ["اسيتو", "اسيستو", "assetto", "assito", "corsa"],
         "role_ids": [1516370348717772971],
     },
-    1517796157785509969: {
+    "valorant": {
         "label": "Valorant",
+        "aliases": ["فالورانت", "valorant", "valo"],
         "role_ids": [1500824746596630629],
     },
-    1517796072200605766: {
+    "fortnite": {
         "label": "فورت نايت",
+        "aliases": ["فورت", "فورت نايت", "fortnite"],
         "role_ids": [1490770204341571755],
     },
-    1517796050574770238: {
+    "rocket": {
         "label": "روكت ليق",
+        "aliases": ["روكت", "روكت ليق", "rocket", "rl"],
         "role_ids": [1479244719543287818],
     },
-    1517796255302942720: {
+    "overwatch": {
         "label": "Overwatch PC + PS",
+        "aliases": ["اوفر", "اوفر واتش", "overwatch", "ow"],
         "role_ids": [1479687436455116850, 1479686969960304702],
     },
-    1517797091840102461: {
+    "marvel": {
         "label": "MARVEL",
+        "aliases": ["مارفل", "marvel"],
         "role_ids": [1489590768757768382],
     },
 }
 
 
-def load_panel_message_id() -> int | None:
+def load_json(file: Path, default):
     try:
-        with PANEL_FILE.open("r", encoding="utf-8") as file:
-            data = json.load(file)
+        with file.open("r", encoding="utf-8") as opened_file:
+            return json.load(opened_file)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+        return default.copy() if isinstance(default, dict) else default
+
+
+def save_json(file: Path, data):
+    DATA_DIR.mkdir(exist_ok=True)
+    with file.open("w", encoding="utf-8") as opened_file:
+        json.dump(data, opened_file, ensure_ascii=False, indent=4)
+
+
+def load_panel_message_id() -> int | None:
+    data = load_json(PANEL_FILE, {})
     message_id = data.get("message_id")
     return int(message_id) if message_id else None
 
 
 def save_panel_message_id(message_id: int):
-    DATA_DIR.mkdir(exist_ok=True)
-    with PANEL_FILE.open("w", encoding="utf-8") as file:
-        json.dump({"message_id": message_id}, file, ensure_ascii=False, indent=4)
+    save_json(PANEL_FILE, {"message_id": message_id})
+
+
+def load_emojis():
+    return load_json(EMOJI_FILE, {})
+
+
+def save_emoji(game_key: str, emoji_data: dict):
+    data = load_emojis()
+    data[game_key] = emoji_data
+    save_json(EMOJI_FILE, data)
 
 
 def can_setup_roles(member: discord.Member) -> bool:
     return member.guild_permissions.manage_roles
 
 
-def get_reaction_config(payload: discord.RawReactionActionEvent):
-    emoji_id = payload.emoji.id
-    return ROLE_REACTIONS.get(emoji_id) if emoji_id else None
+def normalize_text(text: str) -> str:
+    return " ".join(text.casefold().strip().split())
+
+
+def find_game_key(text: str) -> str | None:
+    normalized = normalize_text(text)
+    for key, game in GAMES.items():
+        for alias in game["aliases"]:
+            if normalize_text(alias) in normalized:
+                return key
+    return None
+
+
+def parse_emoji(text: str):
+    custom_match = re.search(r"<a?:([A-Za-z0-9_]+):(\d{15,25})>", text)
+    if custom_match:
+        return {
+            "type": "custom",
+            "name": custom_match.group(1),
+            "id": int(custom_match.group(2)),
+        }
+
+    raw_id_match = re.search(r":(\d{15,25}):", text)
+    if raw_id_match:
+        return {"type": "custom", "id": int(raw_id_match.group(1))}
+
+    for char in text.strip().split():
+        if not char.startswith("!") and not any(char.casefold() in normalize_text(game["label"]) for game in GAMES.values()):
+            return {"type": "unicode", "name": char}
+    return None
+
+
+def emoji_to_display(emoji_data: dict | None):
+    if not emoji_data:
+        return "بدون ايموجي"
+    if emoji_data["type"] == "custom":
+        emoji_id = emoji_data["id"]
+        emoji = bot.get_emoji(emoji_id)
+        if emoji:
+            return str(emoji)
+        name = emoji_data.get("name", "emoji")
+        return f"<:{name}:{emoji_id}>"
+    return emoji_data["name"]
+
+
+def emoji_to_reaction(emoji_data: dict | None):
+    if not emoji_data:
+        return None
+    if emoji_data["type"] == "custom":
+        emoji = bot.get_emoji(emoji_data["id"])
+        if emoji:
+            return emoji
+        if emoji_data.get("name"):
+            return discord.PartialEmoji(
+                name=emoji_data["name"],
+                id=emoji_data["id"],
+            )
+        return None
+    return emoji_data["name"]
+
+
+def reaction_matches(payload: discord.RawReactionActionEvent, emoji_data: dict) -> bool:
+    if emoji_data["type"] == "custom":
+        return payload.emoji.id == emoji_data["id"]
+    return payload.emoji.name == emoji_data["name"]
+
+
+def get_game_from_reaction(payload: discord.RawReactionActionEvent):
+    for game_key, emoji_data in load_emojis().items():
+        if game_key in GAMES and reaction_matches(payload, emoji_data):
+            return GAMES[game_key]
+    return None
 
 
 def is_panel_reaction(payload: discord.RawReactionActionEvent) -> bool:
@@ -135,13 +234,13 @@ async def get_payload_member(payload: discord.RawReactionActionEvent):
 
 
 async def update_member_roles(payload: discord.RawReactionActionEvent, add_roles: bool):
-    if payload.user_id == bot.user.id or payload.guild_id is None:
+    if payload.guild_id is None or bot.user is None or payload.user_id == bot.user.id:
         return
     if not is_panel_reaction(payload):
         return
 
-    config = get_reaction_config(payload)
-    if config is None:
+    game = get_game_from_reaction(payload)
+    if game is None:
         return
 
     member = await get_payload_member(payload)
@@ -150,7 +249,7 @@ async def update_member_roles(payload: discord.RawReactionActionEvent, add_roles
 
     roles = [
         member.guild.get_role(role_id)
-        for role_id in config["role_ids"]
+        for role_id in game["role_ids"]
         if member.guild.get_role(role_id) is not None
     ]
     if not roles:
@@ -168,16 +267,17 @@ async def update_member_roles(payload: discord.RawReactionActionEvent, add_roles
 
 
 def build_roles_embed(guild: discord.Guild):
+    saved_emojis = load_emojis()
     description_lines = [
         "اضغط على الإيموجي المناسب حتى تأخذ الرتبة.",
         "إذا شلت التفاعل، تنشال منك الرتبة تلقائيًا.",
         "",
     ]
 
-    for emoji_id, config in ROLE_REACTIONS.items():
-        emoji = bot.get_emoji(emoji_id) or f"<:{emoji_id}:{emoji_id}>"
+    for game_key, game in GAMES.items():
+        emoji = emoji_to_display(saved_emojis.get(game_key))
         role_mentions = []
-        for role_id in config["role_ids"]:
+        for role_id in game["role_ids"]:
             role = guild.get_role(role_id)
             role_mentions.append(role.mention if role else f"`{role_id}`")
         description_lines.append(f"{emoji} {' + '.join(role_mentions)}")
@@ -193,36 +293,43 @@ def build_roles_embed(guild: discord.Guild):
 
 
 async def add_panel_reactions(message: discord.Message):
-    for emoji_id in ROLE_REACTIONS:
-        emoji = bot.get_emoji(emoji_id)
-        if emoji is None:
-            print(f"Could not find emoji: {emoji_id}")
+    for emoji_data in load_emojis().values():
+        reaction = emoji_to_reaction(emoji_data)
+        if reaction is None:
+            print(f"Could not use emoji: {emoji_data}")
             continue
         try:
-            await message.add_reaction(emoji)
+            await message.add_reaction(reaction)
         except discord.HTTPException as exc:
-            print(f"Could not add reaction {emoji_id}: {exc}")
+            print(f"Could not add reaction {emoji_data}: {exc}")
 
 
-async def ensure_roles_panel():
+async def get_roles_panel_channel():
     channel = bot.get_channel(REACTION_ROLES_CHANNEL_ID)
     if channel is None:
         try:
             channel = await bot.fetch_channel(REACTION_ROLES_CHANNEL_ID)
         except discord.HTTPException:
             print(f"Could not find reaction roles channel: {REACTION_ROLES_CHANNEL_ID}")
-            return
-
+            return None
     if not isinstance(channel, discord.TextChannel):
         print("Reaction roles channel is not a text channel.")
-        return
+        return None
+    return channel
+
+
+async def ensure_roles_panel():
+    channel = await get_roles_panel_channel()
+    if channel is None:
+        return None
 
     panel_message_id = load_panel_message_id()
     if panel_message_id is not None:
         try:
             panel_message = await channel.fetch_message(panel_message_id)
+            await panel_message.edit(embed=build_roles_embed(channel.guild))
             await add_panel_reactions(panel_message)
-            return
+            return panel_message
         except discord.NotFound:
             pass
         except discord.HTTPException as exc:
@@ -231,6 +338,50 @@ async def ensure_roles_panel():
     panel_message = await channel.send(embed=build_roles_embed(channel.guild))
     save_panel_message_id(panel_message.id)
     await add_panel_reactions(panel_message)
+    return panel_message
+
+
+async def refresh_roles_panel():
+    panel_message = await ensure_roles_panel()
+    if panel_message is None:
+        return
+    try:
+        await panel_message.clear_reactions()
+    except discord.HTTPException:
+        pass
+    await add_panel_reactions(panel_message)
+
+
+@bot.command(name="emoji")
+@commands.guild_only()
+async def set_emoji_command(ctx: commands.Context, *, text: str = ""):
+    await handle_emoji_setup_message(ctx.message, text)
+
+
+@bot.command(name="ايموجي")
+@commands.guild_only()
+async def set_arabic_emoji_command(ctx: commands.Context, *, text: str = ""):
+    await handle_emoji_setup_message(ctx.message, text)
+
+
+async def handle_emoji_setup_message(message: discord.Message, text: str | None = None):
+    if message.channel.id != EMOJI_SETUP_CHANNEL_ID:
+        return
+    if not isinstance(message.author, discord.Member) or not can_setup_roles(message.author):
+        return
+
+    content = text if text is not None else message.content
+    game_key = find_game_key(content)
+    emoji_data = parse_emoji(content)
+    if not game_key or not emoji_data:
+        return
+
+    save_emoji(game_key, emoji_data)
+    await refresh_roles_panel()
+    await message.reply(
+        f"تم حفظ إيموجي {emoji_to_display(emoji_data)} للعبة {GAMES[game_key]['label']}.",
+        mention_author=False,
+    )
 
 
 @bot.command(name="roles")
@@ -238,7 +389,6 @@ async def ensure_roles_panel():
 async def send_roles_panel(ctx: commands.Context):
     if ctx.channel.id != REACTION_ROLES_CHANNEL_ID:
         return
-
     if not can_setup_roles(ctx.author):
         await ctx.reply("ما عندك صلاحية إدارة الرتب.", mention_author=False)
         return
@@ -246,6 +396,15 @@ async def send_roles_panel(ctx: commands.Context):
     panel_message = await ctx.send(embed=build_roles_embed(ctx.guild))
     save_panel_message_id(panel_message.id)
     await add_panel_reactions(panel_message)
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or message.guild is None:
+        return
+    if message.channel.id == EMOJI_SETUP_CHANNEL_ID and not message.content.startswith("!"):
+        await handle_emoji_setup_message(message)
+    await bot.process_commands(message)
 
 
 @bot.event
