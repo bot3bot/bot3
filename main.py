@@ -49,11 +49,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 LOGIN_RETRY_SECONDS = 1800
 REACTION_ROLES_CHANNEL_ID = 1517791670391934986
+NOTIFICATION_ROLES_CHANNEL_ID = 1517805623943630918
 EMOJI_SETUP_CHANNEL_ID = 1480429990628560978
 
 DATA_DIR = Path("data")
 PANEL_FILE = DATA_DIR / "reaction_roles_panel.json"
 EMOJI_FILE = DATA_DIR / "reaction_roles_emojis.json"
+NOTIFICATION_PANEL_FILE = DATA_DIR / "notification_roles_panel.json"
+NOTIFICATION_EMOJI_FILE = DATA_DIR / "notification_roles_emojis.json"
 
 GAMES = {
     "fivem": {
@@ -98,6 +101,29 @@ GAMES = {
     },
 }
 
+NOTIFICATIONS = {
+    "designers": {
+        "label": "اشعار المصممين",
+        "aliases": ["اشعار المصممين", "المصممين", "مصممين", "designers", "designer"],
+        "role_ids": [1516657757162311770],
+    },
+    "photographers": {
+        "label": "اشعار المصورين",
+        "aliases": ["اشعار المصورين", "المصورين", "مصورين", "photographers", "photographer"],
+        "role_ids": [1516657875282300948],
+    },
+    "movies": {
+        "label": "اشعار المسلسلات و الافلام",
+        "aliases": ["اشعار المسلسلات", "اشعار الافلام", "المسلسلات", "الافلام", "افلام", "مسلسلات", "movies", "series"],
+        "role_ids": [1516679930828685362],
+    },
+    "giveaway": {
+        "label": "اشعار القيف اواي",
+        "aliases": ["اشعار القيف", "اشعار القيف اواي", "القيف", "قيف", "قيف اواي", "giveaway"],
+        "role_ids": [1517805222653591583],
+    },
+}
+
 
 def load_json(file: Path, default):
     try:
@@ -123,6 +149,16 @@ def save_panel_message_id(message_id: int):
     save_json(PANEL_FILE, {"message_id": message_id})
 
 
+def load_notification_panel_message_id() -> int | None:
+    data = load_json(NOTIFICATION_PANEL_FILE, {})
+    message_id = data.get("message_id")
+    return int(message_id) if message_id else None
+
+
+def save_notification_panel_message_id(message_id: int):
+    save_json(NOTIFICATION_PANEL_FILE, {"message_id": message_id})
+
+
 def load_emojis():
     return load_json(EMOJI_FILE, {})
 
@@ -131,6 +167,16 @@ def save_emoji(game_key: str, emoji_data: dict):
     data = load_emojis()
     data[game_key] = emoji_data
     save_json(EMOJI_FILE, data)
+
+
+def load_notification_emojis():
+    return load_json(NOTIFICATION_EMOJI_FILE, {})
+
+
+def save_notification_emoji(notification_key: str, emoji_data: dict):
+    data = load_notification_emojis()
+    data[notification_key] = emoji_data
+    save_json(NOTIFICATION_EMOJI_FILE, data)
 
 
 def can_setup_roles(member: discord.Member) -> bool:
@@ -154,13 +200,25 @@ def text_before_emoji(text: str) -> str:
     return text
 
 
-def find_game_key(text: str) -> str | None:
+def find_item_key(text: str, items: dict) -> str | None:
     normalized = normalize_text(remove_emoji_markup(text_before_emoji(text)))
-    for key, game in GAMES.items():
-        for alias in game["aliases"]:
+    for key, item in items.items():
+        for alias in item["aliases"]:
             if normalize_text(alias) in normalized:
                 return key
     return None
+
+
+def find_game_key(text: str) -> str | None:
+    return find_item_key(text, GAMES)
+
+
+def find_notification_key(text: str) -> str | None:
+    return find_item_key(text, NOTIFICATIONS)
+
+
+def all_items():
+    return list(GAMES.values()) + list(NOTIFICATIONS.values())
 
 
 def parse_emoji(text: str):
@@ -177,8 +235,8 @@ def parse_emoji(text: str):
         return {"type": "custom", "id": int(raw_id_match.group(1))}
 
     text_without_words = remove_emoji_markup(text)
-    for game in GAMES.values():
-        for alias in game["aliases"]:
+    for item in all_items():
+        for alias in item["aliases"]:
             text_without_words = re.sub(
                 re.escape(alias),
                 " ",
@@ -234,12 +292,28 @@ def get_game_from_reaction(payload: discord.RawReactionActionEvent):
     return None
 
 
+def get_notification_from_reaction(payload: discord.RawReactionActionEvent):
+    for notification_key, emoji_data in load_notification_emojis().items():
+        if notification_key in NOTIFICATIONS and reaction_matches(payload, emoji_data):
+            return NOTIFICATIONS[notification_key]
+    return None
+
+
 def is_panel_reaction(payload: discord.RawReactionActionEvent) -> bool:
     panel_message_id = load_panel_message_id()
     return (
         panel_message_id is not None
         and payload.message_id == panel_message_id
         and payload.channel_id == REACTION_ROLES_CHANNEL_ID
+    )
+
+
+def is_notification_panel_reaction(payload: discord.RawReactionActionEvent) -> bool:
+    panel_message_id = load_notification_panel_message_id()
+    return (
+        panel_message_id is not None
+        and payload.message_id == panel_message_id
+        and payload.channel_id == NOTIFICATION_ROLES_CHANNEL_ID
     )
 
 
@@ -259,11 +333,14 @@ async def get_payload_member(payload: discord.RawReactionActionEvent):
 async def update_member_roles(payload: discord.RawReactionActionEvent, add_roles: bool):
     if payload.guild_id is None or bot.user is None or payload.user_id == bot.user.id:
         return
-    if not is_panel_reaction(payload):
+    if is_panel_reaction(payload):
+        item = get_game_from_reaction(payload)
+    elif is_notification_panel_reaction(payload):
+        item = get_notification_from_reaction(payload)
+    else:
         return
 
-    game = get_game_from_reaction(payload)
-    if game is None:
+    if item is None:
         return
 
     member = await get_payload_member(payload)
@@ -272,7 +349,7 @@ async def update_member_roles(payload: discord.RawReactionActionEvent, add_roles
 
     roles = [
         member.guild.get_role(role_id)
-        for role_id in game["role_ids"]
+        for role_id in item["role_ids"]
         if member.guild.get_role(role_id) is not None
     ]
     if not roles:
@@ -315,6 +392,32 @@ def build_roles_embed(guild: discord.Guild):
     return embed
 
 
+def build_notifications_embed(guild: discord.Guild):
+    saved_emojis = load_notification_emojis()
+    description_lines = [
+        "اختر الإشعارات اللي تبغاها من الإيموجيات.",
+        "إذا شلت التفاعل، تنشال منك رتبة الإشعار تلقائيًا.",
+        "",
+    ]
+
+    for notification_key, notification in NOTIFICATIONS.items():
+        emoji = emoji_to_display(saved_emojis.get(notification_key))
+        role_mentions = []
+        for role_id in notification["role_ids"]:
+            role = guild.get_role(role_id)
+            role_mentions.append(role.mention if role else f"`{role_id}`")
+        description_lines.append(f"{emoji} {' + '.join(role_mentions)}")
+
+    embed = discord.Embed(
+        title="اختار اشعاراتك",
+        description="\n".join(description_lines),
+        color=discord.Color.gold(),
+    )
+    if guild.icon:
+        embed.set_footer(text=guild.name, icon_url=guild.icon.url)
+    return embed
+
+
 async def add_panel_reactions(message: discord.Message):
     for emoji_data in load_emojis().values():
         reaction = emoji_to_reaction(emoji_data)
@@ -327,6 +430,18 @@ async def add_panel_reactions(message: discord.Message):
             print(f"Could not add reaction {emoji_data}: {exc}")
 
 
+async def add_notification_panel_reactions(message: discord.Message):
+    for emoji_data in load_notification_emojis().values():
+        reaction = emoji_to_reaction(emoji_data)
+        if reaction is None:
+            print(f"Could not use notification emoji: {emoji_data}")
+            continue
+        try:
+            await message.add_reaction(reaction)
+        except discord.HTTPException as exc:
+            print(f"Could not add notification reaction {emoji_data}: {exc}")
+
+
 async def get_roles_panel_channel():
     channel = bot.get_channel(REACTION_ROLES_CHANNEL_ID)
     if channel is None:
@@ -337,6 +452,20 @@ async def get_roles_panel_channel():
             return None
     if not isinstance(channel, discord.TextChannel):
         print("Reaction roles channel is not a text channel.")
+        return None
+    return channel
+
+
+async def get_notification_panel_channel():
+    channel = bot.get_channel(NOTIFICATION_ROLES_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(NOTIFICATION_ROLES_CHANNEL_ID)
+        except discord.HTTPException:
+            print(f"Could not find notification roles channel: {NOTIFICATION_ROLES_CHANNEL_ID}")
+            return None
+    if not isinstance(channel, discord.TextChannel):
+        print("Notification roles channel is not a text channel.")
         return None
     return channel
 
@@ -364,6 +493,29 @@ async def ensure_roles_panel():
     return panel_message
 
 
+async def ensure_notification_panel():
+    channel = await get_notification_panel_channel()
+    if channel is None:
+        return None
+
+    panel_message_id = load_notification_panel_message_id()
+    if panel_message_id is not None:
+        try:
+            panel_message = await channel.fetch_message(panel_message_id)
+            await panel_message.edit(embed=build_notifications_embed(channel.guild))
+            await add_notification_panel_reactions(panel_message)
+            return panel_message
+        except discord.NotFound:
+            pass
+        except discord.HTTPException as exc:
+            print(f"Could not fetch saved notification panel message: {exc}")
+
+    panel_message = await channel.send(embed=build_notifications_embed(channel.guild))
+    save_notification_panel_message_id(panel_message.id)
+    await add_notification_panel_reactions(panel_message)
+    return panel_message
+
+
 async def refresh_roles_panel():
     panel_message = await ensure_roles_panel()
     if panel_message is None:
@@ -373,6 +525,17 @@ async def refresh_roles_panel():
     except discord.HTTPException:
         pass
     await add_panel_reactions(panel_message)
+
+
+async def refresh_notification_panel():
+    panel_message = await ensure_notification_panel()
+    if panel_message is None:
+        return
+    try:
+        await panel_message.clear_reactions()
+    except discord.HTTPException:
+        pass
+    await add_notification_panel_reactions(panel_message)
 
 
 @bot.command(name="emoji")
@@ -395,16 +558,27 @@ async def handle_emoji_setup_message(message: discord.Message, text: str | None 
 
     content = text if text is not None else message.content
     game_key = find_game_key(content)
+    notification_key = find_notification_key(content)
     emoji_data = parse_emoji(content)
-    if not game_key or not emoji_data:
+    if not emoji_data:
         return
 
-    save_emoji(game_key, emoji_data)
-    await refresh_roles_panel()
-    await message.reply(
-        f"تم حفظ إيموجي {emoji_to_display(emoji_data)} للعبة {GAMES[game_key]['label']}.",
-        mention_author=False,
-    )
+    if notification_key:
+        save_notification_emoji(notification_key, emoji_data)
+        await refresh_notification_panel()
+        await message.reply(
+            f"تم حفظ إيموجي {emoji_to_display(emoji_data)} لـ {NOTIFICATIONS[notification_key]['label']}.",
+            mention_author=False,
+        )
+        return
+
+    if game_key:
+        save_emoji(game_key, emoji_data)
+        await refresh_roles_panel()
+        await message.reply(
+            f"تم حفظ إيموجي {emoji_to_display(emoji_data)} للعبة {GAMES[game_key]['label']}.",
+            mention_author=False,
+        )
 
 
 @bot.command(name="roles")
@@ -419,6 +593,20 @@ async def send_roles_panel(ctx: commands.Context):
     panel_message = await ctx.send(embed=build_roles_embed(ctx.guild))
     save_panel_message_id(panel_message.id)
     await add_panel_reactions(panel_message)
+
+
+@bot.command(name="notifications")
+@commands.guild_only()
+async def send_notifications_panel(ctx: commands.Context):
+    if ctx.channel.id != NOTIFICATION_ROLES_CHANNEL_ID:
+        return
+    if not can_setup_roles(ctx.author):
+        await ctx.reply("ما عندك صلاحية إدارة الرتب.", mention_author=False)
+        return
+
+    panel_message = await ctx.send(embed=build_notifications_embed(ctx.guild))
+    save_notification_panel_message_id(panel_message.id)
+    await add_notification_panel_reactions(panel_message)
 
 
 @bot.event
@@ -444,6 +632,7 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
 async def on_ready():
     print(f"Logged in as {bot.user}")
     await ensure_roles_panel()
+    await ensure_notification_panel()
 
 
 keep_alive()
