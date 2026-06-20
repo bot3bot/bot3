@@ -63,7 +63,7 @@ GAMES = {
     },
     "bls": {
         "label": "محاكي الحوادث",
-        "aliases": ["محاكي", "محاكي الحوادث", "bls", "beamng"],
+        "aliases": ["محاكي", "محاكي الحوادث"],
         "role_ids": [1495710572023517285],
     },
     "assetto": {
@@ -141,8 +141,21 @@ def normalize_text(text: str) -> str:
     return " ".join(text.casefold().strip().split())
 
 
+def remove_emoji_markup(text: str) -> str:
+    text = re.sub(r"<a?:[A-Za-z0-9_]+:\d{15,25}>", " ", text)
+    text = re.sub(r":\d{15,25}:", " ", text)
+    return text
+
+
+def text_before_emoji(text: str) -> str:
+    match = re.search(r"<a?:[A-Za-z0-9_]+:\d{15,25}>|:\d{15,25}:", text)
+    if match:
+        return text[: match.start()]
+    return text
+
+
 def find_game_key(text: str) -> str | None:
-    normalized = normalize_text(text)
+    normalized = normalize_text(remove_emoji_markup(text_before_emoji(text)))
     for key, game in GAMES.items():
         for alias in game["aliases"]:
             if normalize_text(alias) in normalized:
@@ -163,9 +176,19 @@ def parse_emoji(text: str):
     if raw_id_match:
         return {"type": "custom", "id": int(raw_id_match.group(1))}
 
-    for char in text.strip().split():
-        if not char.startswith("!") and not any(char.casefold() in normalize_text(game["label"]) for game in GAMES.values()):
-            return {"type": "unicode", "name": char}
+    text_without_words = remove_emoji_markup(text)
+    for game in GAMES.values():
+        for alias in game["aliases"]:
+            text_without_words = re.sub(
+                re.escape(alias),
+                " ",
+                text_without_words,
+                flags=re.IGNORECASE,
+            )
+
+    for word in text_without_words.strip().split():
+        if not word.startswith("!"):
+            return {"type": "unicode", "name": word}
     return None
 
 
